@@ -185,6 +185,54 @@ def extract_keywords(texts, top_n=10, min_word_len=4):
     return Counter(words).most_common(top_n)
 
 
+def extract_phrases(texts, top_n=5, ngram_range=(2, 4)):
+    """Extract common multi-word phrases from texts (for controversial analysis)"""
+    import re
+    
+    stopwords = {
+        'the', 'and', 'for', 'that', 'with', 'this', 'from', 'which', 'while',
+        'their', 'through', 'between', 'where', 'each', 'both', 'into', 'also',
+        'more', 'than', 'when', 'what', 'how', 'who', 'been', 'have', 'has',
+        'would', 'could', 'should', 'being', 'these', 'those', 'such', 'then',
+        'them', 'they', 'were', 'was', 'are', 'can', 'will', 'just', 'only',
+        'there', 'here', 'about', 'over', 'under', 'some', 'any', 'all'
+    }
+    
+    phrase_counts = Counter()
+    
+    for text in texts:
+        if not text:
+            continue
+        
+        # Clean and tokenize
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        words = text.split()
+        words = [w for w in words if len(w) >= 3]
+        
+        # Extract n-grams
+        for n in range(ngram_range[0], ngram_range[1] + 1):
+            for i in range(len(words) - n + 1):
+                ngram = words[i:i+n]
+                # Skip if starts or ends with stopword
+                if ngram[0] in stopwords or ngram[-1] in stopwords:
+                    continue
+                # Skip if mostly stopwords
+                non_stop = [w for w in ngram if w not in stopwords]
+                if len(non_stop) < len(ngram) * 0.5:
+                    continue
+                phrase = ' '.join(ngram)
+                phrase_counts[phrase] += 1
+    
+    # Filter and sort - prefer phrases that appear multiple times, then by length
+    # Include all phrases (even count=1) to ensure we get results for smaller datasets
+    filtered = [(p, c) for p, c in phrase_counts.items()]
+    # Sort by count descending, then by phrase length descending (prefer longer meaningful phrases)
+    filtered.sort(key=lambda x: (-x[1], -len(x[0].split())))
+    
+    return filtered[:top_n]
+
+
 # ============================================================================
 # HEDGE PHRASE LOADING
 # ============================================================================
@@ -324,7 +372,7 @@ def find_optimal_clusters(embeddings, max_k=10):
     return elbow, list(K), inertias
 
 
-def cluster_and_label(embeddings, texts, concepts, n_clusters=5):
+def cluster_and_label(embeddings, texts, concepts, n_clusters=5, extract_cluster_phrases=False):
     """Cluster embeddings and extract labels for each cluster (ordered by size, 0=largest)"""
     
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
@@ -353,11 +401,17 @@ def cluster_and_label(embeddings, texts, concepts, n_clusters=5):
         keywords = extract_keywords(cluster_texts, top_n=5)
         keyword_str = ', '.join([w for w, c in keywords])
         
+        # Extract phrases for controversial analysis
+        phrases = []
+        if extract_cluster_phrases:
+            phrases = extract_phrases(cluster_texts, top_n=5)
+        
         clusters[new_i] = {
             'size': mask.sum(),
             'percentage': mask.sum() / len(labels) * 100,
             'keywords': keywords,
             'keyword_str': keyword_str,
+            'phrases': phrases,
             'label': f"Cluster {new_i}",
             'centroid': new_centroids[new_i],
             'texts': cluster_texts[:5],
@@ -381,20 +435,25 @@ def compute_density(embeddings, k=15):
 # VISUALIZATION
 # ============================================================================
 
-def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_override=None):
-    """Create comprehensive analysis figure with clean layout"""
+def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_override=None, 
+                           is_controversial=False, hedge_data=None):
+    """Create comprehensive analysis figure with clean 3-panel layout.
     
-    fig = plt.figure(figsize=(20, 14))
+    Layout matches the design:
+    - Left (large): Idea Space Cluster Map
+    - Right: Cluster keywords (neutral) or Hedge phrases to filter (controversial)
+    - Bottom (wide): Sample Outputs
     
-    # Create grid layout: 
-    # Row 1: Cluster Map (large), Density Map, Cluster Bar Chart
-    # Row 2: Sample Outputs (wide), Keyword Table
+    Args:
+        is_controversial: If True, show hedge phrases instead of keywords in the table
+        hedge_data: Dict with 'hedge_sentences' list (for controversial analysis)
+    """
+    
+    fig = plt.figure(figsize=(18, 12))
     
     # Compute shared data
     pca = PCA(n_components=2)
     coords_2d = pca.fit_transform(embeddings)
-    
-    density = compute_density(embeddings)
     
     # Determine number of clusters
     if n_clusters_override:
@@ -402,17 +461,24 @@ def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_
     else:
         optimal_k, k_range, inertias = find_optimal_clusters(embeddings)
         n_clusters = max(optimal_k, 3)
-        n_clusters = min(n_clusters, 10)  # Increased cap for more clusters
+        n_clusters = min(n_clusters, 10)
     
-    labels, clusters, kmeans = cluster_and_label(embeddings, texts, concepts, n_clusters)
+    # Extract phrases for controversial analysis
+    labels, clusters, kmeans = cluster_and_label(
+        embeddings, texts, concepts, n_clusters, 
+        extract_cluster_phrases=is_controversial
+    )
     
     # Project centroids to 2D
     centroids_2d = pca.transform(kmeans.cluster_centers_)
     
+    # Sort clusters by size for consistent display
+    sorted_indices = sorted(range(n_clusters), key=lambda i: clusters[i]['percentage'], reverse=True)
+    
     # ========================================================================
-    # PANEL 1: Main Cloud with Clusters (top left, large)
+    # PANEL 1: Idea Space Cluster Map (left, large)
     # ========================================================================
-    ax1 = fig.add_axes([0.03, 0.38, 0.42, 0.58])  # [left, bottom, width, height]
+    ax1 = fig.add_axes([0.04, 0.30, 0.48, 0.65])  # [left, bottom, width, height]
     
     # Plot points colored by cluster
     for i in range(n_clusters):
@@ -420,7 +486,7 @@ def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_
         ax1.scatter(
             coords_2d[mask, 0], coords_2d[mask, 1],
             c=COLORS[i % len(COLORS)],
-            s=40, alpha=0.6,
+            s=50, alpha=0.6,
             label=f"{clusters[i]['label']} ({clusters[i]['percentage']:.0f}%)"
         )
     
@@ -429,198 +495,132 @@ def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_
         ax1.scatter(
             centroids_2d[i, 0], centroids_2d[i, 1],
             c=COLORS[i % len(COLORS)],
-            s=300, marker='*', edgecolors='black', linewidths=1.5
+            s=350, marker='*', edgecolors='black', linewidths=1.5
         )
         ax1.annotate(
             clusters[i]['label'],
             (centroids_2d[i, 0], centroids_2d[i, 1]),
             xytext=(10, 10), textcoords='offset points',
-            fontsize=9, fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8)
+            fontsize=10, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='gray')
         )
     
     ax1.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% variance)', fontsize=11)
     ax1.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% variance)', fontsize=11)
-    ax1.set_title('Idea Space: Cluster Map', fontsize=14, fontweight='bold')
-    
-    # Move legend outside
-    ax1.legend(loc='upper left', fontsize=8, framealpha=0.9)
+    ax1.set_title('Idea Space Cluster Map', fontsize=14, fontweight='bold')
+    ax1.legend(loc='upper left', fontsize=9, framealpha=0.95)
     
     # ========================================================================
-    # PANEL 2: Density Heatmap with Labels (top middle)
+    # PANEL 2: Right panel - Keywords (neutral) or Hedge Phrases (controversial)
     # ========================================================================
-    ax2 = fig.add_axes([0.48, 0.55, 0.24, 0.40])
+    ax2 = fig.add_axes([0.55, 0.30, 0.43, 0.65])
+    ax2.axis('off')
     
-    scatter = ax2.scatter(
-        coords_2d[:, 0], coords_2d[:, 1],
-        c=density, cmap='YlOrRd', s=25, alpha=0.7
-    )
-    cbar = plt.colorbar(scatter, ax=ax2, shrink=0.8)
-    cbar.set_label('Density', fontsize=9)
-    
-    # Find and label high-density regions
-    density_threshold = np.percentile(density, 90)
-    high_density_mask = density > density_threshold
-    high_density_indices = np.where(high_density_mask)[0]
-    
-    if len(high_density_indices) > 0:
-        high_density_coords = coords_2d[high_density_indices]
-        n_peaks = min(4, max(2, len(high_density_indices) // 15))
+    if is_controversial and hedge_data and hedge_data.get('hedge_sentences'):
+        # Show identified hedge phrases to filter
+        hedge_sentences = hedge_data['hedge_sentences']
         
-        if n_peaks >= 2 and len(high_density_indices) >= n_peaks:
-            peak_kmeans = KMeans(n_clusters=n_peaks, random_state=42, n_init=10)
-            peak_labels = peak_kmeans.fit_predict(high_density_coords)
-            peak_centers = peak_kmeans.cluster_centers_
+        ax2.text(0.5, 0.98, "Hedging Phrases to Filter", fontsize=13, fontweight='bold',
+                 transform=ax2.transAxes, ha='center', va='top', color='#c00000')
+        
+        ax2.text(0.5, 0.93, f"({len(hedge_sentences)} topic-agnostic evasive patterns identified)", 
+                fontsize=9, color='#666666', style='italic',
+                transform=ax2.transAxes, ha='center', va='top')
+        
+        y_pos = 0.86
+        
+        # Show hedge phrases (up to 20)
+        for i, sentence in enumerate(hedge_sentences[:20]):
+            # Truncate if too long
+            display = sentence[:85] + "..." if len(sentence) > 85 else sentence
             
-            for i in range(n_peaks):
-                peak_mask = peak_labels == i
-                peak_point_indices = high_density_indices[peak_mask]
-                peak_texts = [texts[j] for j in peak_point_indices]
-                
-                peak_keywords = extract_keywords(peak_texts, top_n=2, min_word_len=4)
-                if peak_keywords:
-                    label = '/'.join([w for w, c in peak_keywords[:2]])
-                    
-                    ax2.annotate(
-                        label,
-                        (peak_centers[i, 0], peak_centers[i, 1]),
-                        fontsize=7, fontweight='bold',
-                        color='darkred',
-                        bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='darkred'),
-                        ha='center'
-                    )
-    
-    ax2.set_xlabel('PC1', fontsize=9)
-    ax2.set_ylabel('PC2', fontsize=9)
-    ax2.set_title('Density Map: Hot Spots', fontsize=11, fontweight='bold')
-    
-    # ========================================================================
-    # PANEL 3: Cluster Size Bar Chart (top right)
-    # ========================================================================
-    ax3 = fig.add_axes([0.76, 0.55, 0.22, 0.40])
-    
-    # Sort by percentage for cleaner display
-    sorted_indices = sorted(range(n_clusters), key=lambda i: clusters[i]['percentage'], reverse=True)
-    cluster_names = [clusters[i]['label'] for i in sorted_indices]
-    cluster_sizes = [clusters[i]['percentage'] for i in sorted_indices]
-    bar_colors = [COLORS[i % len(COLORS)] for i in sorted_indices]
-    
-    bars = ax3.barh(range(n_clusters), cluster_sizes, color=bar_colors)
-    
-    ax3.set_yticks(range(n_clusters))
-    ax3.set_yticklabels(cluster_names, fontsize=9)
-    ax3.set_xlabel('% of Outputs', fontsize=10)
-    ax3.set_title('Cluster Distribution', fontsize=11, fontweight='bold')
-    ax3.invert_yaxis()  # Largest at top
-    
-    # Add percentage labels
-    for bar, pct in zip(bars, cluster_sizes):
-        ax3.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height()/2,
-                f'{pct:.1f}%', va='center', fontsize=8)
-    
-    ax3.set_xlim(0, max(cluster_sizes) * 1.2)
+            ax2.text(0.03, y_pos, f"{i+1}.", fontsize=9, fontweight='bold',
+                    color='#c00000', transform=ax2.transAxes, va='top')
+            ax2.text(0.07, y_pos, f'"{display}"', fontsize=8, 
+                    color='#333333', style='italic', transform=ax2.transAxes, va='top')
+            y_pos -= 0.038
+            
+            if y_pos < 0.05:
+                remaining = len(hedge_sentences) - i - 1
+                if remaining > 0:
+                    ax2.text(0.5, y_pos, f"... and {remaining} more", fontsize=8,
+                            color='#999999', transform=ax2.transAxes, ha='center', va='top')
+                break
+    else:
+        # Show cluster keywords (for neutral analysis or if no hedge data)
+        table_title = "Cluster Keywords"
+        ax2.text(0.5, 0.98, table_title, fontsize=13, fontweight='bold',
+                 transform=ax2.transAxes, ha='center', va='top')
+        
+        y_pos = 0.90
+        
+        for idx, i in enumerate(sorted_indices):
+            c = clusters[i]
+            color = COLORS[i % len(COLORS)]
+            
+            # Cluster header with color indicator
+            header_text = f"● {c['label']}  ({c['percentage']:.1f}%, {c['size']} samples)"
+            ax2.text(0.03, y_pos, header_text, fontsize=10, fontweight='bold', 
+                    color=color, transform=ax2.transAxes, va='top')
+            y_pos -= 0.04
+            
+            # Keywords
+            keywords = ', '.join([w for w, _ in c['keywords'][:5]])
+            ax2.text(0.05, y_pos, f"Keywords: {keywords}", fontsize=9, 
+                    color='#333333', transform=ax2.transAxes, va='top')
+            y_pos -= 0.035
+            
+            y_pos -= 0.015  # Space between clusters
     
     # ========================================================================
-    # PANEL 4: Sample Outputs with Input Concepts (bottom left)
+    # PANEL 3: Sample Outputs (bottom, full width)
     # ========================================================================
-    ax4 = fig.add_axes([0.03, 0.03, 0.45, 0.30])
-    ax4.axis('off')
+    ax3 = fig.add_axes([0.02, 0.02, 0.96, 0.25])
+    ax3.axis('off')
     
-    # Show top 4 clusters with examples (need room for concepts)
-    sorted_clusters = sorted(clusters.items(), key=lambda x: x[1]['percentage'], reverse=True)[:4]
-    
-    y_pos = 0.95
-    ax4.text(0.0, y_pos, "Sample Outputs by Cluster", fontsize=11, fontweight='bold',
-             transform=ax4.transAxes, verticalalignment='top')
-    y_pos -= 0.06
+    ax3.text(0.5, 0.97, "Sample Outputs", fontsize=13, fontweight='bold',
+             transform=ax3.transAxes, ha='center', va='top')
     
     import textwrap
     
-    for idx, (cluster_id, c) in enumerate(sorted_clusters):
-        # Get example text (full, no truncation)
+    # Show more samples from top clusters (up to 6)
+    y_pos = 0.88
+    n_samples = min(6, len(sorted_indices))
+    
+    for idx in range(n_samples):
+        cluster_id = sorted_indices[idx]
+        c = clusters[cluster_id]
+        color = COLORS[cluster_id % len(COLORS)]
+        
+        # Get example text
         if c['texts'] and len(c['texts']) > 0:
             example = c['texts'][0]
             example = example.replace('\n', ' ').replace('  ', ' ')
+            # Allow longer text for full width display
+            if len(example) > 400:
+                example = example[:400] + '...'
         else:
             example = "(no examples)"
         
-        # Get input concepts - check if they look like real concepts (short words, not synthesis)
-        input_text = None
-        if c.get('concepts') and len(c['concepts']) > 0:
-            concept_a, concept_b = c['concepts'][0]
-            # Only show if they look like actual concept words (not synthesis text)
-            if (concept_a and concept_b and 
-                len(concept_a) < 40 and len(concept_b) < 40 and
-                not concept_a.upper().startswith('SYNTHESIS') and
-                not concept_b.upper().startswith('SYNTHESIS')):
-                input_text = f"{concept_a} + {concept_b}"
+        # Cluster indicator and text on same line, full width
+        label_text = f"● {c['label']}: "
+        ax3.text(0.01, y_pos, label_text, fontsize=9, fontweight='bold',
+                color=color, transform=ax3.transAxes, va='top')
         
-        # Cluster name in color
-        ax4.text(0.0, y_pos, f"● {c['label']} ({c['percentage']:.0f}%)", 
-                fontsize=9, fontweight='bold', color=COLORS[cluster_id % len(COLORS)],
-                transform=ax4.transAxes, verticalalignment='top')
-        
-        # Show input concepts only if valid
-        if input_text:
-            y_pos -= 0.04
-            ax4.text(0.02, y_pos, f"Input: {input_text}",
-                    fontsize=7, color='#666666',
-                    transform=ax4.transAxes, verticalalignment='top')
-        
-        # Output text - wrap to multiple lines
-        wrapped = textwrap.fill(f"→ \"{example}\"", width=90)
+        # Output text - full width wrapping (starts right after label)
+        wrapped = textwrap.fill(f'"{example}"', width=200)
         n_lines = wrapped.count('\n') + 1
-        y_pos -= 0.04
-        ax4.text(0.02, y_pos, wrapped,
-                fontsize=7, style='italic', color='#333333',
-                transform=ax4.transAxes, verticalalignment='top')
-        y_pos -= 0.04 * n_lines + 0.02
-    
-    # ========================================================================
-    # PANEL 5: Cluster Keywords Table (bottom right)
-    # ========================================================================
-    ax5 = fig.add_axes([0.52, 0.03, 0.46, 0.30])
-    ax5.axis('off')
-    
-    # Build table data - sorted by size
-    table_data = []
-    for i in sorted_indices:
-        c = clusters[i]
-        keywords = ', '.join([w for w, _ in c['keywords'][:4]])
-        table_data.append([
-            c['label'],
-            f"{c['percentage']:.1f}%",
-            keywords
-        ])
-    
-    table = ax5.table(
-        cellText=table_data,
-        colLabels=['Cluster', 'Size', 'Top Keywords'],
-        loc='upper center',
-        cellLoc='left',
-        colWidths=[0.28, 0.10, 0.62]
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1.0, 1.6)
-    
-    # Style header
-    for i in range(3):
-        table[(0, i)].set_facecolor('#4472C4')
-        table[(0, i)].set_text_props(color='white', fontweight='bold')
-    
-    # Alternate row colors
-    for i in range(1, len(table_data) + 1):
-        for j in range(3):
-            if i % 2 == 0:
-                table[(i, j)].set_facecolor('#E8EEF7')
+        ax3.text(0.065, y_pos, wrapped, fontsize=8, style='italic', color='#333333',
+                transform=ax3.transAxes, va='top')
+        y_pos -= 0.045 * n_lines + 0.02
     
     # ========================================================================
     # MAIN TITLE
     # ========================================================================
+    analysis_type = "Controversial" if is_controversial else "Neutral"
     fig.suptitle(
-        f'LLM Output Analysis: {len(embeddings)} Probes → {n_clusters} Clusters',
-        fontsize=16, fontweight='bold', y=0.98
+        f'LLM Output Analysis ({analysis_type}): {len(embeddings)} Probes → {n_clusters} Clusters',
+        fontsize=16, fontweight='bold', y=0.99
     )
     
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
@@ -629,7 +629,7 @@ def create_analysis_figure(embeddings, texts, concepts, output_path, n_clusters_
     return clusters
 
 
-def create_detailed_cluster_view(embeddings, texts, clusters, labels, output_path):
+def create_detailed_cluster_view(embeddings, texts, clusters, labels, output_path, is_controversial=False):
     """Create detailed view of each cluster with example texts"""
     
     n_clusters = len(clusters)
@@ -651,21 +651,33 @@ def create_detailed_cluster_view(embeddings, texts, clusters, labels, output_pat
         ax.scatter(coords_2d[mask, 0], coords_2d[mask, 1],
                   c=COLORS[i], s=40, alpha=0.7)
         
-        # Title with keywords
-        keywords = ', '.join([w for w, _ in clusters[i]['keywords'][:3]])
+        # Title with keywords or phrases
+        if is_controversial and clusters[i].get('phrases'):
+            # Show top phrase for controversial
+            phrases = [p for p, _ in clusters[i]['phrases'][:2]]
+            subtitle = '; '.join(phrases) if phrases else ''
+        else:
+            keywords = ', '.join([w for w, _ in clusters[i]['keywords'][:3]])
+            subtitle = keywords
+        
         ax.set_title(
-            f"Cluster {i+1}: {clusters[i]['label']}\n({clusters[i]['percentage']:.1f}%) - {keywords}",
+            f"{clusters[i]['label']}\n({clusters[i]['percentage']:.1f}%) - {subtitle}",
             fontsize=10, fontweight='bold'
         )
         
         ax.set_xlabel('PC1', fontsize=9)
         ax.set_ylabel('PC2', fontsize=9)
+        
+        # Add border
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
     
     # Hide unused axes
     for i in range(n_clusters, 6):
         axes[i].axis('off')
     
-    plt.suptitle('Individual Cluster Views', fontsize=14, fontweight='bold')
+    analysis_type = "Controversial" if is_controversial else "Neutral"
+    plt.suptitle(f'Individual Cluster Views ({analysis_type})', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     print(f"Saved: {output_path}")
@@ -741,13 +753,18 @@ def main():
         print("="*70)
         print("\nUsage: python deep_analysis.py <results_file.json> [options]")
         print("\nOptions:")
-        print("  <n_clusters>      Force specific number of clusters (e.g., 5)")
-        print("  --hedge-dir <dir> Directory containing hedge files (default: lagrange_mapping_results)")
-        print("  --no-hedge        Skip hedge phrase analysis")
+        print("  <n_clusters>       Force specific number of clusters (e.g., 5)")
+        print("  --controversial    Treat as controversial analysis (show phrases in table)")
+        print("  --hedge-dir <dir>  Directory containing hedge files (default: lagrange_mapping_results)")
+        print("  --no-hedge         Skip hedge phrase analysis")
         print("\nExamples:")
-        print("  python deep_analysis.py results.json           # Auto-detect clusters")
-        print("  python deep_analysis.py results.json 5         # Force 5 clusters")
-        print("  python deep_analysis.py results.json --no-hedge  # Skip hedge analysis")
+        print("  python deep_analysis.py results.json                    # Auto-detect clusters")
+        print("  python deep_analysis.py results.json 5                  # Force 5 clusters")
+        print("  python deep_analysis.py results.json --controversial    # Controversial analysis mode")
+        print("  python deep_analysis.py results.json --no-hedge         # Skip hedge analysis")
+        print("\nAnalysis Modes:")
+        print("  Default:        Shows keywords in cluster table")
+        print("  Controversial:  Shows extracted phrases instead of keywords")
         print("\nHedge Phrase Analysis:")
         print("  If hedge_sentences_*.json exists, will display empirically discovered")
         print("  hedging patterns - phrases the model uses to avoid taking positions.")
@@ -759,6 +776,7 @@ def main():
     user_n_clusters = None
     hedge_dir = "lagrange_mapping_results"
     show_hedge = True
+    is_controversial = False
     
     i = 2
     while i < len(sys.argv):
@@ -768,6 +786,10 @@ def main():
             i += 2
         elif arg == "--no-hedge":
             show_hedge = False
+            i += 1
+        elif arg == "--controversial":
+            is_controversial = True
+            print("Mode: Controversial analysis (phrases enabled)")
             i += 1
         else:
             # Try to parse as cluster count
@@ -798,16 +820,26 @@ def main():
     
     # Create main analysis figure
     main_output = os.path.join(output_dir, f'{base_name}_analysis.png')
-    clusters = create_analysis_figure(embeddings, texts, concepts, main_output, n_clusters_override=user_n_clusters)
+    clusters = create_analysis_figure(
+        embeddings, texts, concepts, main_output, 
+        n_clusters_override=user_n_clusters,
+        is_controversial=is_controversial
+    )
     
     # Print cluster summary
     print_cluster_summary(clusters)
     
     # Create detailed cluster views
     n_clusters = len(clusters)
-    labels, _, _ = cluster_and_label(embeddings, texts, concepts, n_clusters)
+    labels, _, _ = cluster_and_label(
+        embeddings, texts, concepts, n_clusters, 
+        extract_cluster_phrases=is_controversial
+    )
     detail_output = os.path.join(output_dir, f'{base_name}_clusters.png')
-    create_detailed_cluster_view(embeddings, texts, clusters, labels, detail_output)
+    create_detailed_cluster_view(
+        embeddings, texts, clusters, labels, detail_output,
+        is_controversial=is_controversial
+    )
     
     # ========================================================================
     # HEDGE PHRASE ANALYSIS

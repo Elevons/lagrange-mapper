@@ -664,7 +664,7 @@ def save_concept_pairs_cache(pairs: List[Tuple[str, str]]):
         print(f"  Warning: Failed to save cache: {e}")
 
 def find_latest_intermediate_results() -> Tuple[str, List[Dict], int]:
-    """Find and load the most recent intermediate results file
+    """Find and load the intermediate results file
     
     Returns:
         Tuple of (filename, probes_list, num_completed) or (None, [], 0) if no valid file found
@@ -672,50 +672,31 @@ def find_latest_intermediate_results() -> Tuple[str, List[Dict], int]:
     if not os.path.exists(RESULTS_DIR):
         return None, [], 0
     
-    # Find all intermediate files
-    intermediate_files = []
-    for filename in os.listdir(RESULTS_DIR):
-        if filename.startswith("intermediate_") and filename.endswith(".json"):
-            filepath = os.path.join(RESULTS_DIR, filename)
-            try:
-                # Parse probe count from filename (e.g., intermediate_50_20231215_123456.json)
-                parts = filename.replace(".json", "").split("_")
-                if len(parts) >= 2:
-                    probe_count = int(parts[1])
-                    mod_time = os.path.getmtime(filepath)
-                    intermediate_files.append((filepath, filename, probe_count, mod_time))
-            except (ValueError, IndexError):
-                continue
+    # Look for the single intermediate file
+    filepath = os.path.join(RESULTS_DIR, "intermediate_latest.json")
     
-    if not intermediate_files:
+    if not os.path.exists(filepath):
         return None, [], 0
     
-    # Sort by modification time (most recent first)
-    intermediate_files.sort(key=lambda x: x[3], reverse=True)
-    
-    # Try to load the most recent valid file
-    for filepath, filename, probe_count, mod_time in intermediate_files:
-        try:
-            with open(filepath, 'r') as f:
-                probes_data = json.load(f)
-            
-            if not isinstance(probes_data, list) or len(probes_data) == 0:
-                continue
-            
-            # Convert embeddings back to numpy arrays
-            for probe in probes_data:
-                if probe.get('final_embedding') is not None:
-                    probe['final_embedding'] = np.array(probe['final_embedding'])
-                if probe.get('embeddings'):
-                    probe['embeddings'] = [np.array(e) for e in probe['embeddings']]
-            
-            return filename, probes_data, len(probes_data)
-            
-        except Exception as e:
-            print(f"  Warning: Could not load {filename}: {e}")
-            continue
-    
-    return None, [], 0
+    try:
+        with open(filepath, 'r') as f:
+            probes_data = json.load(f)
+        
+        if not isinstance(probes_data, list) or len(probes_data) == 0:
+            return None, [], 0
+        
+        # Convert embeddings back to numpy arrays
+        for probe in probes_data:
+            if probe.get('final_embedding') is not None:
+                probe['final_embedding'] = np.array(probe['final_embedding'])
+            if probe.get('embeddings'):
+                probe['embeddings'] = [np.array(e) for e in probe['embeddings']]
+        
+        return "intermediate_latest.json", probes_data, len(probes_data)
+        
+    except Exception as e:
+        print(f"  Warning: Could not load intermediate_latest.json: {e}")
+        return None, [], 0
 
 def generate_probes_batch(n_probes: int, use_cache: bool = True) -> List[Tuple[str, str]]:
     """Generate all concept pairs upfront in one batch
@@ -1234,9 +1215,9 @@ def run_experiment():
         probe_result = run_probe(i + 1, concept_a, concept_b)
         all_probes.append(probe_result)
         
-        # Save intermediate results every 10 probes
+        # Save intermediate results every 10 probes (overwrites single file)
         if (i + 1) % 10 == 0:
-            intermediate_path = f"{RESULTS_DIR}/intermediate_{i+1}_{TIMESTAMP}.json"
+            intermediate_path = f"{RESULTS_DIR}/intermediate_latest.json"
             with open(intermediate_path, 'w') as f:
                 # Convert numpy arrays to lists for JSON
                 save_data = []

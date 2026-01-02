@@ -518,40 +518,48 @@ def step_2_analysis(results_file: str):
             if len(controversial_embeddings) > 0:
                 deep_analysis.print_statistics(controversial_embeddings, controversial_texts)
                 
+                # Load hedge data for controversial analysis
+                hedge_data = None
+                centroid_path, sentences_path = deep_analysis.find_hedge_files(output_dir)
+                if sentences_path:
+                    hedge_data = deep_analysis.load_hedge_data(sentences_path)
+                    print(f"  Loaded {len(hedge_data.get('hedge_sentences', []))} hedge phrases from {sentences_path.name}")
+                else:
+                    print("  Note: No hedge phrases file found - run mapper first to generate hedge detection")
+                
                 controversial_output = os.path.join(output_dir, f'{base_name}_controversial_analysis.png')
                 controversial_clusters = deep_analysis.create_analysis_figure(
                     controversial_embeddings, controversial_texts, controversial_concepts, controversial_output,
-                    n_clusters_override=N_CLUSTERS
+                    n_clusters_override=N_CLUSTERS,
+                    is_controversial=True,
+                    hedge_data=hedge_data  # Pass hedge phrases for filtering display
                 )
                 deep_analysis.print_cluster_summary(controversial_clusters)
+        
+        print(f"\nAnalysis outputs saved to:")
+        if neutral_indices:
+            print(f"  {os.path.join(output_dir, f'{base_name}_neutral_analysis.png')}")
+        if controversial_indices:
+            print(f"  {os.path.join(output_dir, f'{base_name}_controversial_analysis.png')}")
     
-    # Also do combined analysis
-    print("\n" + "="*70)
-    print("ANALYZING ALL PROBES (COMBINED)")
-    print("="*70)
-    
-    # Print statistics
-    deep_analysis.print_statistics(embeddings, texts)
-    
-    # Create main analysis figure
-    main_output = os.path.join(output_dir, f'{base_name}_analysis.png')
-    clusters = deep_analysis.create_analysis_figure(
-        embeddings, texts, concepts, main_output, 
-        n_clusters_override=N_CLUSTERS
-    )
-    
-    # Print cluster summary
-    deep_analysis.print_cluster_summary(clusters)
-    
-    # Create detailed cluster views
-    n_clusters = len(clusters)
-    labels, _, _ = deep_analysis.cluster_and_label(embeddings, texts, concepts, n_clusters)
-    detail_output = os.path.join(output_dir, f'{base_name}_clusters.png')
-    deep_analysis.create_detailed_cluster_view(embeddings, texts, clusters, labels, detail_output)
-    
-    print(f"\nAnalysis outputs saved to:")
-    print(f"  {main_output}")
-    print(f"  {detail_output}")
+    else:
+        # No separate analysis - just do a single combined analysis
+        print("\n" + "="*70)
+        print("ANALYZING ALL PROBES")
+        print("="*70)
+        
+        deep_analysis.print_statistics(embeddings, texts)
+        
+        main_output = os.path.join(output_dir, f'{base_name}_analysis.png')
+        clusters = deep_analysis.create_analysis_figure(
+            embeddings, texts, concepts, main_output, 
+            n_clusters_override=N_CLUSTERS
+        )
+        
+        deep_analysis.print_cluster_summary(clusters)
+        
+        print(f"\nAnalysis output saved to:")
+        print(f"  {main_output}")
     
     # Return the results file path (for next step)
     return results_file

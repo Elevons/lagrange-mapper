@@ -160,23 +160,28 @@ def load_hedge_sentences(sentences_path: Path) -> Tuple[List[str], List[str]]:
 def create_hedge_attractor(
     centroid: np.ndarray, 
     sentences: List[str], 
-    keywords: List[str]
+    keywords: List[str] = None  # Keywords not used for hedge detection
 ) -> Dict:
     """
     Create a special 'hedging' attractor entry for the filter config.
     
     This attractor represents the model's natural hedging patterns,
     discovered empirically from sentence-level clustering.
+    
+    IMPORTANT: Hedge detection works via EMBEDDING SIMILARITY ONLY,
+    not keyword matching. The centroid captures the "feel" of evasive
+    language regardless of specific words used.
     """
     return {
         "rank": 0,  # Highest priority - hedging is the most important to filter
         "name": "hedging",
-        "type": "hedge_centroid",  # Special marker
+        "type": "hedge_centroid",  # Special marker - steering uses embedding-only
         "percentage": 0,  # Not from standard clustering
-        "keywords": keywords,
+        "keywords": [],  # NO keywords - hedge detection is embedding-only
+        "hedge_phrases": sentences[:20],  # Store phrases for reference/display
         "sample_outputs": sentences[:5],
         "centroid": centroid.tolist(),
-        "description": "Empirically discovered hedging patterns from sentence-level analysis"
+        "description": "Empirically discovered hedging patterns - detected via embedding similarity only"
     }
 
 

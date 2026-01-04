@@ -60,6 +60,7 @@ class SteeringConfig:
     total_attractors: int
     keyword_threshold: float = 3.0
     embedding_threshold: float = 0.75
+    hedge_embedding_threshold: float = 0.70  # Lower threshold for hedge detection
     default_intensity: float = 0.5
     max_regeneration_attempts: int = 3
     embedding_url: str = DEFAULT_EMBEDDING_URL
@@ -90,6 +91,7 @@ class SteeringConfig:
             total_attractors=data.get('total_attractors', len(attractors)),
             keyword_threshold=settings.get('keyword_threshold', 3.0),
             embedding_threshold=settings.get('embedding_threshold', 0.75),
+            hedge_embedding_threshold=settings.get('hedge_embedding_threshold', 0.70),
             default_intensity=settings.get('default_intensity', 0.5),
             max_regeneration_attempts=settings.get('max_regeneration_attempts', 3),
             # All attractor keywords (for topic-based exemption)
@@ -258,10 +260,14 @@ class AttractorSteering:
         
         text_lower = text.lower()
         
+        # Separate hedge attractors (embedding-only) from regular attractors
+        hedge_attractors = [a for a in active_attractors if a.get('type') == 'hedge_centroid']
+        regular_attractors = [a for a in active_attractors if a.get('type') != 'hedge_centroid']
+        
         # ========================================
-        # KEYWORD DETECTION
+        # KEYWORD DETECTION (regular attractors only)
         # ========================================
-        keyword_index = self._build_keyword_index(active_attractors)
+        keyword_index = self._build_keyword_index(regular_attractors)
         attractor_scores = {}
         
         for keyword, attractor_names in keyword_index.items():
@@ -283,7 +289,7 @@ class AttractorSteering:
         
         result.keyword_score = sum(attractor_scores.values())
         
-        # Track triggered attractors
+        # Track triggered attractors (from keywords)
         for name, score in attractor_scores.items():
             if score >= self.config.keyword_threshold / 2:
                 result.triggered_attractors.append(name)
@@ -291,19 +297,33 @@ class AttractorSteering:
         # ========================================
         # EMBEDDING DETECTION
         # ========================================
+        hedge_triggered = False
+        
         if use_embeddings and self.centroids:
-            # Only check centroids for active attractors
-            active_names = {a['name'] for a in active_attractors}
-            active_centroids = {
-                name: centroid 
-                for name, centroid in self.centroids.items() 
-                if name in active_names
-            }
+            emb = self.get_embedding(text)
             
-            if active_centroids:
-                emb = self.get_embedding(text)
+            if emb is not None:
+                # Check hedge attractors first (embedding-only, lower threshold)
+                hedge_threshold = getattr(self.config, 'hedge_embedding_threshold', 0.70)
+                for hedge in hedge_attractors:
+                    if hedge['name'] in self.centroids:
+                        similarity = float(np.dot(emb, self.centroids[hedge['name']]))
+                        if similarity > hedge_threshold:
+                            hedge_triggered = True
+                            result.embedding_score = max(result.embedding_score, similarity)
+                            result.nearest_attractor = hedge['name']
+                            if hedge['name'] not in result.triggered_attractors:
+                                result.triggered_attractors.append(f"HEDGE:{hedge['name']}")
                 
-                if emb is not None:
+                # Check regular attractors
+                active_names = {a['name'] for a in regular_attractors}
+                active_centroids = {
+                    name: centroid 
+                    for name, centroid in self.centroids.items() 
+                    if name in active_names
+                }
+                
+                if active_centroids:
                     best_similarity = 0
                     best_attractor = None
                     
@@ -313,8 +333,9 @@ class AttractorSteering:
                             best_similarity = similarity
                             best_attractor = name
                     
-                    result.embedding_score = best_similarity
-                    result.nearest_attractor = best_attractor
+                    if best_similarity > result.embedding_score:
+                        result.embedding_score = best_similarity
+                        result.nearest_attractor = best_attractor
                     
                     if best_similarity > self.config.embedding_threshold:
                         if best_attractor not in result.triggered_attractors:
@@ -325,7 +346,8 @@ class AttractorSteering:
         # ========================================
         result.is_attracted = (
             result.keyword_score >= self.config.keyword_threshold or
-            result.embedding_score >= self.config.embedding_threshold
+            result.embedding_score >= self.config.embedding_threshold or
+            hedge_triggered  # Hedge detection via embedding similarity
         )
         
         return result

@@ -74,11 +74,32 @@ Lagrange Mapper detects and filters **phrase-level hedging patterns** using a fo
 
 ### Installation
 
+**1. Clone the repository:**
+
 ```bash
-git clone https://github.com/yourusername/lagrange-mapper.git
+git clone https://github.com/Elevons/lagrange-mapper.git
 cd lagrange-mapper
+```
+
+**2. Create and activate a virtual environment** (recommended for modern Linux systems):
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate it
+source venv/bin/activate  # On Linux/Mac
+# or
+venv\Scripts\activate     # On Windows
+```
+
+**3. Install dependencies:**
+
+```bash
 pip install -r requirements.txt
 ```
+
+**Note**: If you're on a system with externally-managed Python (Ubuntu 23.04+, Debian 12+), you must use a virtual environment. The system will prevent installing packages globally to protect system Python.
 
 ### Requirements
 

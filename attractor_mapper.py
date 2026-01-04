@@ -525,15 +525,13 @@ def generate_controversial_probes(n_probes: int, use_cache: bool = True) -> List
                 questions.append(q)
                 existing_lower.add(q.lower())
     
-    # If still not enough, cycle through what we have
+    # Use what we have (don't cycle/repeat questions)
     if len(questions) < n_probes:
-        print(f"  Cycling through {len(questions)} questions to reach {n_probes}...")
-        while len(questions) < n_probes:
-            questions.extend(questions[:n_probes - len(questions)])
+        print(f"  Note: Only have {len(questions)} unique questions (requested {n_probes}), using all available.")
     
-    # Shuffle and trim to exact count
+    # Shuffle and trim to available count (or requested count if we have more)
     random.shuffle(questions)
-    questions = questions[:n_probes]
+    questions = questions[:n_probes] if len(questions) >= n_probes else questions
     
     print(f"\n  Examples:")
     for i, q in enumerate(questions[:3]):
@@ -572,7 +570,11 @@ def generate_mixed_probes(n_probes: int, controversial_ratio: float, use_cache: 
     # Shuffle to mix them
     random.shuffle(probes)
     
-    print(f"\n  Total: {n_controversial} controversial probes + {n_neutral} concept pairs = {len(probes)} probes")
+    # Count actual probes (may be less than requested if not enough unique questions available)
+    actual_controversial = sum(1 for p in probes if isinstance(p, tuple) and len(p) == 2 and p[1] == "controversial")
+    actual_neutral = len(probes) - actual_controversial
+    
+    print(f"\n  Total: {actual_controversial} controversial probes + {actual_neutral} concept pairs = {len(probes)} probes")
     
     return probes
 

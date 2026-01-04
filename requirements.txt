@@ -1,0 +1,7 @@
+# Core dependencies for Lagrange Mapper project
+numpy>=1.20.0
+scikit-learn>=1.0.0
+matplotlib>=3.3.0
+scipy>=1.7.0
+requests>=2.25.0
+

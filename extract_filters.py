@@ -75,7 +75,48 @@ def make_attractor_name(rank: int) -> str:
 
 
 # ============================================================================
-# HEDGE CENTROID LOADING
+# CODE LEAK CENTROID LOADING
+# ============================================================================
+
+def find_code_leak_files(results_dir: str = "lagrange_mapping_results") -> Tuple[Optional[Path], Optional[Path]]:
+    """
+    Find the most recent code leak centroid and responses files.
+    
+    Returns:
+        Tuple of (code_leak_centroid_path, code_leak_responses_path) or (None, None)
+    """
+    results_path = Path(results_dir)
+    if not results_path.exists():
+        return None, None
+    
+    # Find most recent code leak centroid
+    centroid_files = list(results_path.glob("code_leak_centroid_*.npy"))
+    responses_files = list(results_path.glob("code_leak_responses_*.json"))
+    
+    if not centroid_files:
+        return None, None
+    
+    # Sort by modification time (most recent first)
+    centroid_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    centroid_path = centroid_files[0]
+    
+    # Find matching responses file (same timestamp)
+    responses_path = None
+    if responses_files:
+        # Extract timestamp from centroid filename
+        timestamp = centroid_path.stem.replace("code_leak_centroid_", "")
+        matching = [p for p in responses_files if timestamp in p.stem]
+        if matching:
+            responses_path = matching[0]
+        else:
+            # Fall back to most recent
+            responses_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            responses_path = responses_files[0]
+    
+    return centroid_path, responses_path
+
+# ============================================================================
+# HEDGE CENTROID LOADING (for backward compatibility)
 # ============================================================================
 
 def find_hedge_files(results_dir: str = "lagrange_mapping_results") -> Tuple[Optional[Path], Optional[Path]]:
@@ -157,6 +198,50 @@ def load_hedge_sentences(sentences_path: Path) -> Tuple[List[str], List[str]]:
         return [], []
 
 
+def create_code_leak_attractor(
+    centroid: np.ndarray, 
+    responses: List[str], 
+    keywords: List[str] = None
+) -> Dict:
+    """
+    Create a special 'code_leak' attractor entry for the filter config.
+    
+    This attractor represents the model's code leak patterns,
+    discovered empirically from Unity IR response clustering.
+    
+    IMPORTANT: Code leak detection works via EMBEDDING SIMILARITY and PATTERN MATCHING.
+    The centroid captures responses with programming syntax patterns.
+    """
+    # Extract code leak keywords from responses
+    if keywords is None:
+        keywords = []
+        import re
+        # Common code leak patterns to extract as keywords
+        code_patterns = [
+            r"==|!=|<=|>=",
+            r"Vector3\.",
+            r"Time\.(deltaTime|time)",
+            r"on_trigger_enter",
+            r"\{\{[^}]+\}\}",
+        ]
+        for response in responses[:20]:
+            for pattern in code_patterns:
+                matches = re.findall(pattern, response, re.IGNORECASE)
+                keywords.extend(matches)
+        keywords = list(set(keywords))[:30]
+    
+    return {
+        "rank": 0,  # Highest priority - code leak is the most important to filter
+        "name": "code_leak",
+        "type": "code_leak_centroid",  # Special marker - steering uses embedding + patterns
+        "percentage": 0,  # Not from standard clustering
+        "keywords": keywords[:25],  # Code leak patterns as keywords
+        "code_leak_responses": responses[:20],  # Store responses for reference/display
+        "sample_outputs": responses[:5],
+        "centroid": centroid.tolist(),
+        "description": "Empirically discovered code leak patterns - detected via embedding similarity and pattern matching"
+    }
+
 def create_hedge_attractor(
     centroid: np.ndarray, 
     sentences: List[str], 
@@ -192,7 +277,8 @@ def create_hedge_attractor(
 def generate_filter_config(
     attractors: Dict, 
     model_name: str,
-    hedge_attractor: Optional[Dict] = None
+    hedge_attractor: Optional[Dict] = None,
+    code_leak_attractor: Optional[Dict] = None
 ) -> Dict:
     """
     Generate filter configuration for steering system.
@@ -223,23 +309,33 @@ def generate_filter_config(
             "keyword_threshold": 3,
             "embedding_threshold": 0.75,
             "hedge_embedding_threshold": 0.70,  # Slightly lower for hedge detection
+            "code_leak_embedding_threshold": 0.70,  # For code leak detection
             "default_intensity": 0.5  # Filter top 50% by default
         },
         "all_keywords": [],  # All attractor keywords (for topic exemption at runtime)
-        "has_hedge_attractor": hedge_attractor is not None
+        "has_hedge_attractor": hedge_attractor is not None,
+        "has_code_leak_attractor": code_leak_attractor is not None
     }
     
     # Collect all keywords
     all_keywords = []
     
-    # Add hedge attractor first if available (highest priority)
-    if hedge_attractor:
-        config['attractors'].append(hedge_attractor)
-        all_keywords.extend(hedge_attractor.get('keywords', []))
+    # Add code leak attractor first if available (highest priority for Unity IR)
+    if code_leak_attractor:
+        config['attractors'].append(code_leak_attractor)
+        all_keywords.extend(code_leak_attractor.get('keywords', []))
         config['total_attractors'] += 1
         start_rank = 1  # Other attractors start at rank 1
     else:
         start_rank = 0
+    
+    # Add hedge attractor if available (for controversial mode)
+    if hedge_attractor:
+        config['attractors'].append(hedge_attractor)
+        all_keywords.extend(hedge_attractor.get('keywords', []))
+        config['total_attractors'] += 1
+        if start_rank == 0:
+            start_rank = 1  # Other attractors start at rank 1
     
     for i, (raw_name, data) in enumerate(sorted_attractors):
         rank = start_rank + i
@@ -513,6 +609,37 @@ def main():
     else:
         attractors = load_attractor_data(input_file)
     
+    # Look for code leak centroid (for Unity IR mode)
+    code_leak_attractor = None
+    print(f"\n{'─'*70}")
+    print("CODE LEAK CENTROID DETECTION")
+    print(f"{'─'*70}")
+    
+    centroid_path, responses_path = find_code_leak_files(hedge_dir)
+    
+    if centroid_path:
+        centroid = load_hedge_centroid(centroid_path)  # Reuse same loading function
+        
+        if centroid is not None:
+            responses = []
+            keywords = []
+            
+            if responses_path:
+                try:
+                    with open(responses_path, 'r') as f:
+                        data = json.load(f)
+                    responses = data.get('code_leak_responses', [])
+                    # Extract keywords from responses
+                    keywords = extract_keywords_from_texts(responses, top_n=30)
+                except Exception as e:
+                    print(f"  Warning: Failed to load code leak responses: {e}")
+            
+            # Create code leak attractor entry
+            code_leak_attractor = create_code_leak_attractor(centroid, responses, keywords)
+            print(f"  ✓ Created code leak attractor with {len(keywords)} keywords")
+    else:
+        print(f"  No code leak centroid found (Unity IR mode may not have been run)")
+    
     # Look for hedge centroid (auto-detect or explicit)
     hedge_attractor = None
     if not skip_hedge:
@@ -546,13 +673,16 @@ def main():
     print(f"\n{'─'*70}")
     print("GENERATING FILTER CONFIG")
     print(f"{'─'*70}")
-    config = generate_filter_config(attractors, model_name, hedge_attractor)
+    config = generate_filter_config(attractors, model_name, hedge_attractor, code_leak_attractor)
     
     # Summary
     print(f"\nFound {len(config['attractors'])} attractors (ranked by priority):")
     for attractor in config['attractors']:
         attractor_type = attractor.get('type', 'cluster')
-        if attractor_type == 'hedge_centroid':
+        if attractor_type == 'code_leak_centroid':
+            print(f"  #{attractor['rank']}: {attractor['name']} [CODE LEAK CENTROID]")
+            print(f"       Keywords: {', '.join(attractor['keywords'][:5])}...")
+        elif attractor_type == 'hedge_centroid':
             print(f"  #{attractor['rank']}: {attractor['name']} [HEDGE CENTROID]")
             print(f"       Keywords: {', '.join(attractor['keywords'][:5])}...")
         else:
@@ -582,6 +712,11 @@ def main():
     print("EXTRACTION COMPLETE")
     print(f"{'='*70}")
     print(f"\nFilter config saved to: {config_path.parent}/")
+    
+    if code_leak_attractor:
+        print(f"\n✓ Includes code leak centroid for Unity IR code leak detection")
+        print(f"  The code leak attractor uses embedding similarity and pattern matching")
+        print(f"  to detect programming syntax in natural language JSON responses.")
     
     if hedge_attractor:
         print(f"\n✓ Includes hedge centroid for empirical hedging detection")

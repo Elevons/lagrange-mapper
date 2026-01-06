@@ -22,6 +22,17 @@ from pathlib import Path
 # ============================================================================
 
 # ============================================================================
+# UNITY IR CONFIGURATION
+# ============================================================================
+
+# Mode selection
+PROBE_MODE = "unity_ir"  # Options: "controversial", "concept_pairs", "unity_ir"
+
+# Unity IR specific
+UNITY_BEHAVIOR_COUNT = 100  # Number of behavior prompts to test
+USE_CODE_LEAK_DETECTION = True
+
+# ============================================================================
 # API KEYS - SET YOUR KEY HERE
 # ============================================================================
 ANTHROPIC_API_KEY = ""  # "sk-ant-..." 
@@ -64,10 +75,11 @@ N_CLUSTERS = 8  # Auto-detect if None, or set to a specific number (e.g., 5)
 
 # Model name for filter configs (used in directory naming)
 MODEL_NAME = "local-model"  # Change to match your actual model
+# For Unity IR mode, will use MODEL_NAME + "-unity-ir" automatically
 
 # Output directories
-RESULTS_DIR = "lagrange_mapping_results"
-FILTER_CONFIG_DIR = "filter_configs"
+RESULTS_DIR = "lagrange_mapping_results"  # Will use "unity_ir_mapping_results" for Unity IR mode
+FILTER_CONFIG_DIR = "filter_configs"  # Will use "unity_ir_filter_configs" for Unity IR mode
 
 # Timestamp for this run
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,6 +178,11 @@ def inject_config_to_mapper():
     # Controversial probe settings
     attractor_mapper.USE_CONTROVERSIAL_PROBES = USE_CONTROVERSIAL_PROBES
     attractor_mapper.CONTROVERSIAL_PROBE_RATIO = CONTROVERSIAL_PROBE_RATIO
+    attractor_mapper.PROBE_MODE = PROBE_MODE
+    attractor_mapper.USE_CODE_LEAK_DETECTION = USE_CODE_LEAK_DETECTION
+    if PROBE_MODE == "unity_ir":
+        attractor_mapper.N_PROBES = UNITY_BEHAVIOR_COUNT
+        attractor_mapper.RESULTS_DIR = "unity_ir_mapping_results"
 
 
 def inject_config_to_steering():
@@ -580,6 +597,14 @@ def step_3_extract_filters(results_file: str):
     
     config_path = None
     
+    # Use Unity IR directories if in Unity IR mode
+    if PROBE_MODE == "unity_ir":
+        filter_config_dir = "unity_ir_filter_configs"
+        model_name = f"{MODEL_NAME}-unity-ir"
+    else:
+        filter_config_dir = FILTER_CONFIG_DIR
+        model_name = MODEL_NAME
+    
     # Check if we need separate filter configs
     if USE_CONTROVERSIAL_PROBES and SEPARATE_CONTROVERSIAL_ANALYSIS:
         # Load raw probe data
@@ -607,13 +632,13 @@ def step_3_extract_filters(results_file: str):
             )
             
             if neutral_attractors:
-                neutral_config = extract_filters.generate_filter_config(neutral_attractors, MODEL_NAME)
+                neutral_config = extract_filters.generate_filter_config(neutral_attractors, model_name)
                 
                 print(f"\nNeutral attractors ({len(neutral_config['attractors'])} total):")
                 for attractor in neutral_config['attractors'][:3]:
                     print(f"  #{attractor['rank']}: {attractor['name']} ({attractor['percentage']:.1f}%)")
                 
-                config_path = extract_filters.save_filter_config(neutral_config, FILTER_CONFIG_DIR)
+                config_path = extract_filters.save_filter_config(neutral_config, filter_config_dir)
         
         # Extract controversial filter config
         if n_controversial > 0:
@@ -650,16 +675,36 @@ def step_3_extract_filters(results_file: str):
     
     # Generate filter config
     print(f"\nGenerating filter configuration...")
-    config = extract_filters.generate_filter_config(attractors, MODEL_NAME)
+    
+    # For Unity IR mode, look for code leak centroid
+    code_leak_attractor = None
+    if PROBE_MODE == "unity_ir":
+        results_dir = "unity_ir_mapping_results"
+        centroid_path, responses_path = extract_filters.find_code_leak_files(results_dir)
+        if centroid_path:
+            centroid = extract_filters.load_hedge_centroid(centroid_path)  # Reuse same function
+            if centroid is not None:
+                responses = []
+                if responses_path:
+                    try:
+                        with open(responses_path, 'r') as f:
+                            data = json.load(f)
+                        responses = data.get('code_leak_responses', [])
+                    except:
+                        pass
+                code_leak_attractor = extract_filters.create_code_leak_attractor(centroid, responses)
+                print(f"  ✓ Found code leak centroid")
+    
+    config = extract_filters.generate_filter_config(attractors, model_name, code_leak_attractor=code_leak_attractor)
     
     # Summary
     print(f"\nFound {len(config['attractors'])} attractors (ranked by dominance):")
     for attractor in config['attractors']:
-        print(f"  #{attractor['rank']}: {attractor['name']} ({attractor['percentage']:.1f}%)")
+        print(f"  #{attractor['rank']}: {attractor['name']} ({attractor.get('percentage', 0):.1f}%)")
         print(f"       Keywords: {', '.join(attractor['keywords'][:5])}...")
     
     # Save
-    config_path = extract_filters.save_filter_config(config, FILTER_CONFIG_DIR)
+    config_path = extract_filters.save_filter_config(config, filter_config_dir)
     
     print(f"\nFilter config saved to: {config_path.parent}/")
     
@@ -713,6 +758,10 @@ def run_pipeline():
     print("ATTRACTOR MAPPING PIPELINE")
     print("="*80)
     print(f"\nConfiguration:")
+    print(f"  Pipeline Mode: {PROBE_MODE.upper()}")
+    if PROBE_MODE == "unity_ir":
+        print(f"  Unity IR Code Leak Detection: {'✓ Enabled' if USE_CODE_LEAK_DETECTION else '✗ Disabled'}")
+        print(f"  Behavior Prompts: {UNITY_BEHAVIOR_COUNT}")
     print(f"  Model Name: {MODEL_NAME}")
     print(f"  Synthesis URL: {LOCAL_SYNTHESIS_URL}")
     print(f"  Synthesis Model: {LOCAL_SYNTHESIS_MODEL}")
@@ -722,17 +771,17 @@ def run_pipeline():
         print(f"  Claude Probe Generator: {CLAUDE_MODEL}")
     else:
         print(f"  Probe Source: Random from concept pool")
-    print(f"  Number of Probes: {N_PROBES}")
+    print(f"  Number of Probes: {N_PROBES if PROBE_MODE != 'unity_ir' else UNITY_BEHAVIOR_COUNT}")
     print(f"  Iterations per Probe: {N_ITERATIONS}")
     print(f"  Number of Clusters: {N_CLUSTERS if N_CLUSTERS else 'auto-detect'}")
-    if USE_CONTROVERSIAL_PROBES:
+    if PROBE_MODE != "unity_ir" and USE_CONTROVERSIAL_PROBES:
         n_controversial = int(N_PROBES * CONTROVERSIAL_PROBE_RATIO)
         n_neutral = N_PROBES - n_controversial
         print(f"  Controversial Probes: {n_controversial} ({CONTROVERSIAL_PROBE_RATIO*100:.0f}%)")
         print(f"  Neutral Probes: {n_neutral} ({(1-CONTROVERSIAL_PROBE_RATIO)*100:.0f}%)")
         print(f"  Separate Analysis: {'✓ Enabled' if SEPARATE_CONTROVERSIAL_ANALYSIS else '✗ Disabled'}")
-    print(f"  Results Directory: {RESULTS_DIR}")
-    print(f"  Filter Config Directory: {FILTER_CONFIG_DIR}")
+    print(f"  Results Directory: {'unity_ir_mapping_results' if PROBE_MODE == 'unity_ir' else RESULTS_DIR}")
+    print(f"  Filter Config Directory: {'unity_ir_filter_configs' if PROBE_MODE == 'unity_ir' else FILTER_CONFIG_DIR}")
     print(f"  Timestamp: {TIMESTAMP}")
     
     print(f"\nPipeline Steps:")
@@ -766,13 +815,20 @@ def run_pipeline():
         config_path = step_3_extract_filters(results_file)
     else:
         # Look for existing config
-        config_path = Path(FILTER_CONFIG_DIR) / MODEL_NAME / "filter_config.json"
+        config_dir = "unity_ir_filter_configs" if PROBE_MODE == "unity_ir" else FILTER_CONFIG_DIR
+        model_name = f"{MODEL_NAME}-unity-ir" if PROBE_MODE == "unity_ir" else MODEL_NAME
+        config_path = Path(config_dir) / model_name / "filter_config.json"
         if not config_path.exists():
             config_path = None
     
     # Step 4: Steering Test
     if RUN_STEERING_TEST and config_path:
         step_4_steering_test(config_path)
+    
+    # Update model name for Unity IR mode in final output
+    if PROBE_MODE == "unity_ir":
+        MODEL_NAME = f"{MODEL_NAME}-unity-ir"
+        FILTER_CONFIG_DIR = "unity_ir_filter_configs"
     
     # Summary
     print("\n" + "="*80)

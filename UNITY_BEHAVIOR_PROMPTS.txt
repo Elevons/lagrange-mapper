@@ -1,0 +1,168 @@
+Unity Behavior Prompts for IR Generation
+==========================================
+
+This file contains 100+ behavior descriptions for testing Unity IR generation.
+These prompts are used to probe the LLM for code leak patterns.
+
+MINIMAL BEHAVIORS (Simple JSON expected)
+----------------------------------------
+1. object that spins
+2. light that flickers
+3. sound that plays on start
+4. particle that emits
+5. texture that scrolls
+6. simple text display
+7. background music player
+8. static decoration with no behavior
+9. invisible trigger zone
+10. empty container object
+11. camera that follows player
+12. health bar that displays
+13. coin that rotates
+14. door that opens
+15. button that highlights on hover
+
+MEDIUM COMPLEXITY
+-----------------
+16. button that opens a door
+17. collectible that gives points
+18. enemy that follows player
+19. platform that moves
+20. trigger that spawns enemies
+21. checkpoint that saves progress
+22. lever that activates mechanism
+23. key that unlocks door
+24. chest that opens when player approaches
+25. NPC that faces player
+26. projectile that travels forward
+27. explosion that damages nearby objects
+28. switch that toggles light
+29. pressure plate that activates trap
+30. teleporter that moves player
+31. shop that sells items
+32. inventory that stores items
+33. quest giver that provides objectives
+34. dialogue system that shows text
+35. cutscene that plays animation
+
+HIGH COMPLEXITY (State machines expected)
+------------------------------------------
+36. boss with multiple attack phases
+37. NPC with dialogue and quest states
+38. vehicle with realistic gear shifting
+39. AI that patrols then chases
+40. weapon with multiple fire modes
+41. character with combat and idle states
+42. door that opens and closes based on switch
+43. elevator that moves between floors
+44. traffic system with lights and cars
+45. weather system that changes over time
+46. day-night cycle with lighting changes
+47. economy system with supply and demand
+48. crafting system with recipes
+49. skill tree with prerequisites
+50. dialogue tree with branching paths
+
+PHYSICS-BASED (Tempts Unity API)
+---------------------------------
+51. ball that bounces with decreasing height
+52. object affected by wind force
+53. magnet pulling metal objects
+54. rigidbody that responds to gravity
+55. collider that detects overlaps
+56. object that slides on ice
+57. pendulum that swings
+58. spring that bounces
+59. rope that sways
+60. cloth that flows in wind
+61. fluid that pours
+62. explosion that creates force
+63. object that floats on water
+64. vehicle that handles realistically
+65. character that jumps with physics
+
+MATH-HEAVY (Tempts expressions)
+--------------------------------
+66. object rotating at variable speed
+67. health bar that fills over time
+68. damage falloff based on distance
+69. smooth interpolation between positions
+70. easing animation curve
+71. projectile with parabolic trajectory
+72. camera shake that decays
+73. screen fade that transitions smoothly
+74. UI element that scales with value
+75. graph that plots data points
+76. timer that counts down
+77. score multiplier that increases
+78. experience curve that levels up
+79. damage calculation with modifiers
+80. movement speed that accelerates
+
+INPUT HANDLING (Tempts key code syntax)
+---------------------------------------
+81. player movement with WASD
+82. camera controlled by mouse
+83. inventory cycling with number keys
+84. jump on spacebar press
+85. sprint when shift held
+86. crouch when control pressed
+87. interact when E key pressed
+88. menu toggle with escape key
+89. hotbar selection with number keys
+90. weapon switching with mouse wheel
+91. camera zoom with scroll wheel
+92. pause menu with pause key
+93. quick save with F5
+94. quick load with F9
+95. console toggle with tilde
+
+CONDITIONALS (Tempts if/else syntax)
+-------------------------------------
+96. door locked until player has key
+97. enemy only attacks if player is visible
+98. shop item disabled if player lacks funds
+99. spawn only if room is empty
+100. activate when health below threshold
+101. trigger only during daytime
+102. enable when quest completed
+103. disable when inventory full
+104. show only if player has item
+105. hide when player too far
+106. change when state equals value
+107. execute if condition is true
+108. skip if already completed
+109. repeat until condition met
+110. stop when goal reached
+
+STATE TRANSITIONS (Tempts enum-like syntax)
+-------------------------------------------
+111. traffic light cycling through colors
+112. AI switching between patrol and chase
+113. weapon toggling between fire modes
+114. door opening and closing states
+115. NPC idle to talking transition
+116. character walking to running
+117. menu navigating between screens
+118. game transitioning between levels
+119. animation blending between clips
+120. music fading between tracks
+121. weather changing between seasons
+122. day transitioning to night
+123. combat switching to exploration
+124. inventory opening and closing
+125. dialogue advancing through lines
+
+EDGE CASES (Tests over-engineering)
+------------------------------------
+126. static decoration with no behavior
+127. invisible trigger zone
+128. empty container object
+129. placeholder object
+130. debug marker
+131. test spawn point
+132. reference object
+133. parent container
+134. grouping object
+135. organizational helper
+

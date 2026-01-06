@@ -61,6 +61,7 @@ class SteeringConfig:
     keyword_threshold: float = 3.0
     embedding_threshold: float = 0.75
     hedge_embedding_threshold: float = 0.70  # Lower threshold for hedge detection
+    code_leak_embedding_threshold: float = 0.70  # For code leak detection
     default_intensity: float = 0.5
     max_regeneration_attempts: int = 3
     embedding_url: str = DEFAULT_EMBEDDING_URL
@@ -92,6 +93,7 @@ class SteeringConfig:
             keyword_threshold=settings.get('keyword_threshold', 3.0),
             embedding_threshold=settings.get('embedding_threshold', 0.75),
             hedge_embedding_threshold=settings.get('hedge_embedding_threshold', 0.70),
+            code_leak_embedding_threshold=settings.get('code_leak_embedding_threshold', 0.70),
             default_intensity=settings.get('default_intensity', 0.5),
             max_regeneration_attempts=settings.get('max_regeneration_attempts', 3),
             # All attractor keywords (for topic-based exemption)
@@ -412,6 +414,112 @@ class AttractorSteering:
             "topic": topic,
             "exempted_keywords": sorted(exempted)
         }
+    
+    def detect_code_leak(self, json_response: str, intensity: float = 0.5) -> DetectionResult:
+        """
+        Detect code leak patterns in generated Unity IR JSON.
+        
+        Uses two methods:
+        1. Pattern matching against CODE_LEAK_PATTERNS
+        2. Embedding similarity to code_leak centroid
+        
+        Args:
+            json_response: The JSON response to analyze
+            intensity: Detection intensity (0-1)
+        
+        Returns:
+            DetectionResult with code leak detection scores
+        """
+        result = DetectionResult(intensity_used=intensity)
+        
+        # Pattern-based detection
+        CODE_LEAK_PATTERNS = {
+            "operators": [r"==|!=|<=|>=|&&|\|\||!", r"\+|\-|\*|/|%", r"<|>"],
+            "unity_api": [r"Vector3\.", r"Time\.(deltaTime|time)", r"GameObject\.", r"Transform\.", r"Rigidbody\.", r"Collider\.", r"Input\.(GetKey|GetAxis)", r"Physics\.", r"Quaternion\."],
+            "function_calls": [r"\w+\([^)]*\)", r"distance\([^)]*\)", r"normalize\([^)]*\)", r"lerp\([^)]*\)"],
+            "template_syntax": [r"\{\{[^}]+\}\}", r"#\{[^}]+\}"],
+            "variable_assignments": [r"\w+\s*=\s*[^;]+;", r"\w+\s*\+=\s*"],
+            "conditionals": [r"if\s*\(", r"else\s*\{", r"switch\s*\(", r"case\s+"],
+            "method_names": [r"on_trigger_enter", r"on_collision_enter", r"update\s*\(", r"start\s*\(", r"awake\s*\("],
+        }
+        
+        markers = []
+        for category, patterns in CODE_LEAK_PATTERNS.items():
+            for pattern in patterns:
+                matches = re.finditer(pattern, json_response, re.IGNORECASE)
+                for match in matches:
+                    markers.append({
+                        "category": category,
+                        "pattern": match.group(),
+                    })
+                    result.flagged_keywords.append(match.group())
+        
+        result.keyword_score = len(markers)
+        
+        # Embedding-based detection
+        code_leak_attractors = [a for a in self.config.attractors if a.get('type') == 'code_leak_centroid']
+        if code_leak_attractors and "code_leak" in self.centroids:
+            embedding = self.get_embedding(json_response)
+            if embedding is not None:
+                similarity = float(np.dot(embedding, self.centroids["code_leak"]))
+                result.embedding_score = similarity
+                
+                code_leak_threshold = getattr(self.config, 'code_leak_embedding_threshold', 0.70)
+                if similarity > code_leak_threshold:
+                    result.is_attracted = True
+                    result.nearest_attractor = "code_leak"
+                    result.triggered_attractors.append("code_leak")
+        
+        # Trigger on pattern count OR embedding similarity
+        if result.keyword_score >= self.config.keyword_threshold:
+            result.is_attracted = True
+            if "code_leak_patterns" not in result.triggered_attractors:
+                result.triggered_attractors.append("code_leak_patterns")
+        
+        result.attractors_checked = len(code_leak_attractors) if code_leak_attractors else 0
+        
+        return result
+
+
+def build_natural_language_prompt(
+    original_response: str,
+    flagged_patterns: List[str]
+) -> Tuple[str, str]:
+    """
+    Build a prompt to regenerate Unity IR JSON with natural language instead of code.
+    
+    Args:
+        original_response: The JSON response containing code syntax
+        flagged_patterns: List of code patterns that were detected
+    
+    Returns:
+        Tuple of (system_prompt, user_prompt)
+    """
+    system_prompt = """You fix Unity behavior JSON that contains programming syntax.
+Convert code-like expressions to plain English descriptions.
+
+CONVERT:
+- "distance(player) < chaseRange" → "player is within chaseRange"
+- "on_trigger_enter:Player" → "player touches this"  
+- "{{360 * Time.deltaTime}}" → reference a rotationSpeed field
+- "key == 'W'" → "W key is pressed"
+- "Vector3.up" → "up"
+- "state == Patrol" → "currently patrolling"
+
+Output ONLY the corrected JSON, no markdown, no explanations."""
+
+    flagged_list = "\n".join(f"- {p}" for p in flagged_patterns[:10])
+    
+    user_prompt = f"""This Unity behavior JSON contains code syntax that should be natural language:
+
+{original_response}
+
+FLAGGED PATTERNS:
+{flagged_list}
+
+Rewrite with natural language triggers/conditions/params:"""
+
+    return system_prompt, user_prompt
 
 
 # ============================================================================

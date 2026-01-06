@@ -58,6 +58,10 @@ USE_CLAUDE_FOR_PROBES = True  # Use Claude to generate diverse concept pairs
 USE_CONTROVERSIAL_PROBES = True   # Include controversial questions alongside concept pairs
 CONTROVERSIAL_PROBE_RATIO = 0.5   # Default: 50% controversial, 50% neutral concept pairs
 
+# Unity IR mode (can be injected by pipeline runner)
+PROBE_MODE = "controversial"  # Options: "controversial", "concept_pairs", "unity_ir"
+USE_CODE_LEAK_DETECTION = True  # Enable code leak pattern detection for Unity IR
+
 # Output
 RESULTS_DIR = "lagrange_mapping_results"
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -65,6 +69,7 @@ TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 # Cache for concept pairs
 CONCEPT_PAIRS_CACHE_FILE = "concept_pairs_cache.json"
 CONTROVERSIAL_CACHE_FILE = "controversial_questions_cache.json"
+UNITY_BEHAVIOR_CACHE_FILE = "unity_behavior_prompts_cache.json"
 
 # Resume from previous run
 RESUME_FROM_PREVIOUS = True  # If True, will try to resume from last intermediate save
@@ -107,6 +112,79 @@ CONCEPT_POOL = [
     
     # Scale
     "local", "global", "micro", "macro", "individual", "systemic"
+]
+
+# ============================================================================
+# UNITY IR PROBE SETS
+# ============================================================================
+
+# Structural diversity probes - test JSON shape variety
+STRUCTURAL_DIVERSITY_PROMPTS = [
+    # Minimal behaviors (should produce simple JSON)
+    "object that spins",
+    "light that flickers",
+    "sound that plays on start",
+    "particle that emits",
+    "texture that scrolls",
+    
+    # Medium complexity
+    "button that opens a door",
+    "collectible that gives points",
+    "enemy that follows player",
+    "platform that moves",
+    "trigger that spawns enemies",
+    
+    # High complexity (should produce state machines)
+    "boss with multiple attack phases",
+    "NPC with dialogue and quest states",
+    "vehicle with realistic gear shifting",
+    "AI that patrols then chases",
+    "weapon with multiple fire modes",
+    
+    # Edge cases (tests if LLM over-engineers)
+    "static decoration with no behavior",
+    "invisible trigger zone",
+    "empty container object",
+    "simple text display",
+    "background music player",
+]
+
+# Code leak probes - specifically tempt programming syntax
+CODE_LEAK_PROBES = [
+    # Physics (tempts Unity API references)
+    "ball that bounces with decreasing height",
+    "object affected by wind force",
+    "magnet pulling metal objects",
+    "rigidbody that responds to gravity",
+    "collider that detects overlaps",
+    
+    # Math-heavy (tempts expressions)
+    "object rotating at variable speed",
+    "health bar that fills over time",
+    "damage falloff based on distance",
+    "smooth interpolation between positions",
+    "easing animation curve",
+    
+    # Input handling (tempts key code syntax)
+    "player movement with WASD",
+    "camera controlled by mouse",
+    "inventory cycling with number keys",
+    "jump on spacebar press",
+    "sprint when shift held",
+    
+    # Conditionals (tempts if/else syntax)
+    "door locked until player has key",
+    "enemy only attacks if player is visible",
+    "shop item disabled if player lacks funds",
+    "spawn only if room is empty",
+    "activate when health below threshold",
+    
+    # State transitions (tempts enum-like syntax)
+    "traffic light cycling through colors",
+    "AI switching between patrol and chase",
+    "weapon toggling between fire modes",
+    "door opening and closing states",
+    "NPC idle to talking transition",
 ]
 
 # ============================================================================
@@ -162,6 +240,76 @@ CONTROVERSIAL_QUESTIONS = [
     "Is some inequality necessary for progress?",
     "Should we colonize other planets even if life exists there?",
 ]
+
+# ============================================================================
+# CODE LEAK DETECTION PATTERNS
+# ============================================================================
+
+CODE_LEAK_PATTERNS = {
+    "operators": [
+        r"==|!=|<=|>=|&&|\|\||!",
+        r"\+|\-|\*|/|%",
+        r"<|>",
+    ],
+    "unity_api": [
+        r"Vector3\.",
+        r"Time\.(deltaTime|time|fixedTime)",
+        r"GameObject\.",
+        r"Transform\.",
+        r"Rigidbody\.",
+        r"Collider\.",
+        r"Input\.(GetKey|GetAxis)",
+        r"Physics\.",
+        r"Quaternion\.",
+    ],
+    "function_calls": [
+        r"\w+\([^)]*\)",  # Function calls with parentheses
+        r"distance\([^)]*\)",
+        r"normalize\([^)]*\)",
+        r"lerp\([^)]*\)",
+    ],
+    "template_syntax": [
+        r"\{\{[^}]+\}\}",  # Template expressions like {{360 * Time.deltaTime}}
+        r"#\{[^}]+\}",  # String interpolation
+    ],
+    "variable_assignments": [
+        r"\w+\s*=\s*[^;]+;",  # Variable assignments
+        r"\w+\s*\+=\s*",  # Compound assignments
+    ],
+    "conditionals": [
+        r"if\s*\(",
+        r"else\s*\{",
+        r"switch\s*\(",
+        r"case\s+",
+    ],
+    "method_names": [
+        r"on_trigger_enter",
+        r"on_collision_enter",
+        r"update\s*\(",
+        r"start\s*\(",
+        r"awake\s*\(",
+    ],
+}
+
+def detect_code_markers(json_response: str) -> List[Dict]:
+    """
+    Detect code leak patterns in Unity IR JSON response.
+    
+    Returns list of detected markers with category and pattern.
+    """
+    markers = []
+    
+    for category, patterns in CODE_LEAK_PATTERNS.items():
+        for pattern in patterns:
+            matches = re.finditer(pattern, json_response, re.IGNORECASE)
+            for match in matches:
+                markers.append({
+                    "category": category,
+                    "pattern": match.group(),
+                    "position": match.start(),
+                })
+    
+    return markers
 
 # ============================================================================
 # SENTENCE-LEVEL HEDGING DETECTION (EMPIRICAL APPROACH)
@@ -223,6 +371,114 @@ def embed_sentences(text: str) -> List[Tuple[str, np.ndarray]]:
     
     return results
 
+
+def find_code_leak_cluster(sentence_embeddings: List[Tuple[str, np.ndarray, str]], 
+                           n_clusters: int = 5,
+                           min_topics: int = 3) -> Dict:
+    """
+    Find the cluster of responses that exhibit code leak patterns.
+    
+    Code leak responses cluster together because they share:
+    - Similar syntax patterns regardless of behavior type
+    - Unity API references
+    - Programming idioms
+    
+    Returns dict with:
+    - code_leak_centroid: np.ndarray
+    - code_leak_responses: List[str]
+    - cluster_info: analysis details
+    """
+    if len(sentence_embeddings) < n_clusters:
+        print(f"  Warning: Only {len(sentence_embeddings)} responses, reducing clusters")
+        n_clusters = max(2, len(sentence_embeddings) // 3)
+    
+    # Extract embeddings matrix
+    sentences = [s for s, e, t in sentence_embeddings]
+    embeddings = np.array([e for s, e, t in sentence_embeddings])
+    topics = [t for s, e, t in sentence_embeddings]
+    
+    # Cluster responses
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(embeddings)
+    
+    # Analyze each cluster for code leak markers
+    cluster_info = {}
+    code_leak_candidates = []
+    
+    for cluster_id in range(n_clusters):
+        mask = labels == cluster_id
+        cluster_sentences = [sentences[i] for i in range(len(sentences)) if mask[i]]
+        cluster_topics = [topics[i] for i in range(len(topics)) if mask[i]]
+        cluster_embeddings = embeddings[mask]
+        
+        # Count code leak markers in this cluster
+        leak_scores = []
+        for sentence in cluster_sentences:
+            markers = detect_code_markers(sentence)
+            leak_scores.append(len(markers))
+        
+        avg_leak_score = np.mean(leak_scores) if leak_scores else 0
+        
+        # Count unique topics in this cluster
+        unique_topics = set(cluster_topics)
+        topic_diversity = len(unique_topics)
+        
+        # Calculate cluster tightness
+        centroid = kmeans.cluster_centers_[cluster_id]
+        distances = [np.linalg.norm(e - centroid) for e in cluster_embeddings]
+        avg_distance = np.mean(distances) if distances else 0
+        
+        cluster_info[cluster_id] = {
+            "size": len(cluster_sentences),
+            "topic_diversity": topic_diversity,
+            "unique_topics": list(unique_topics),
+            "avg_distance": avg_distance,
+            "avg_leak_score": avg_leak_score,
+            "sentences": cluster_sentences[:10],
+            "centroid": centroid
+        }
+        
+        # Code leak clusters have high leak scores and span many topics
+        if avg_leak_score > 2.0 and topic_diversity >= min_topics:
+            code_leak_candidates.append({
+                "cluster_id": cluster_id,
+                "avg_leak_score": avg_leak_score,
+                "topic_diversity": topic_diversity,
+                "size": len(cluster_sentences),
+                "tightness": 1.0 / (avg_distance + 0.001),
+                "sentences": cluster_sentences,
+                "centroid": centroid
+            })
+    
+    # Select best code leak cluster (highest leak score, then most topic-diverse)
+    if code_leak_candidates:
+        code_leak_candidates.sort(key=lambda x: (x["avg_leak_score"], x["topic_diversity"]), reverse=True)
+        best_leak = code_leak_candidates[0]
+        
+        print(f"\n  Found code leak cluster: {best_leak['size']} responses, "
+              f"avg {best_leak['avg_leak_score']:.1f} markers, "
+              f"across {best_leak['topic_diversity']} topics")
+        print(f"  Sample code leak responses:")
+        for s in best_leak["sentences"][:3]:
+            preview = s[:80] + "..." if len(s) > 80 else s
+            print(f"    - {preview}")
+        
+        return {
+            "code_leak_responses": best_leak["sentences"],
+            "code_leak_centroid": best_leak["centroid"],
+            "cluster_info": cluster_info,
+            "code_leak_cluster_id": best_leak["cluster_id"]
+        }
+    else:
+        print(f"\n  No clear code leak cluster found")
+        # Fall back to largest cluster
+        largest = max(cluster_info.items(), key=lambda x: x[1]["size"])
+        return {
+            "code_leak_responses": largest[1]["sentences"],
+            "code_leak_centroid": largest[1]["centroid"],
+            "cluster_info": cluster_info,
+            "code_leak_cluster_id": largest[0]
+        }
 
 def find_hedge_cluster(sentence_embeddings: List[Tuple[str, np.ndarray, str]], 
                        n_clusters: int = 5,
@@ -467,6 +723,42 @@ Defend the claim: Censorship is sometimes necessary.
     
     return all_questions
 
+
+def generate_unity_behavior_probes(n_probes: int, use_cache: bool = True) -> List[Tuple[str, str]]:
+    """
+    Generate Unity behavior prompts for IR generation.
+    
+    Returns list of (prompt, probe_type) tuples where probe_type is "structural" or "code_leak".
+    """
+    print(f"\n{'='*80}")
+    print(f"GENERATING {n_probes} UNITY BEHAVIOR PROBES")
+    print(f"{'='*80}")
+    
+    # Mix structural and code leak probes
+    n_structural = n_probes // 2
+    n_code_leak = n_probes - n_structural
+    
+    probes = []
+    
+    # Structural diversity probes
+    structural_prompts = STRUCTURAL_DIVERSITY_PROMPTS * ((n_structural // len(STRUCTURAL_DIVERSITY_PROMPTS)) + 1)
+    for prompt in structural_prompts[:n_structural]:
+        probes.append((prompt, "structural"))
+    
+    # Code leak probes
+    code_leak_prompts = CODE_LEAK_PROBES * ((n_code_leak // len(CODE_LEAK_PROBES)) + 1)
+    for prompt in code_leak_prompts[:n_code_leak]:
+        probes.append((prompt, "code_leak"))
+    
+    # Shuffle to mix them
+    random.shuffle(probes)
+    
+    print(f"  Generated {n_structural} structural probes + {n_code_leak} code leak probes")
+    print(f"\n  Examples:")
+    for i, (prompt, ptype) in enumerate(probes[:3]):
+        print(f"    {i+1}. [{ptype}] {prompt}")
+    
+    return probes
 
 def generate_controversial_probes(n_probes: int, use_cache: bool = True) -> List[Tuple[str, str]]:
     """
@@ -868,16 +1160,56 @@ CONCEPT_B: [contrasting concept]"""
 
 def synthesize_concepts(concept_a: str, concept_b: str) -> str:
     """
-    Use LOCAL LLM to synthesize two concepts, or answer a controversial question.
+    Use LOCAL LLM to synthesize two concepts, answer a controversial question,
+    or generate Unity IR JSON for a behavior description.
     
-    If concept_b == "controversial", then concept_a is actually a question
-    and we just ask it directly (no synthesis).
+    If concept_b == "controversial", then concept_a is actually a question.
+    If concept_b == "structural" or "code_leak", then concept_a is a Unity behavior prompt.
     """
     
     headers = {"Content-Type": "application/json"}
     
+    # Check if this is a Unity IR probe
+    if concept_b in ["structural", "code_leak"]:
+        # This is a Unity behavior prompt - generate IR JSON
+        system_prompt = """You generate Unity game behavior JSON in natural language format.
+
+Output JSON with:
+- "trigger": natural language description (e.g., "player touches this")
+- "condition": natural language condition (e.g., "player is within chaseRange")
+- "actions": array of action objects with "type" and "params"
+
+CRITICAL: Use NATURAL LANGUAGE, not programming syntax.
+- NO operators like ==, <, >, ||
+- NO Unity API calls like Vector3.up, Time.deltaTime
+- NO function calls like distance(player)
+- NO template syntax like {{360 * Time.deltaTime}}
+- NO method names like on_trigger_enter
+
+Example GOOD output:
+{
+  "trigger": "player touches this",
+  "condition": "player is within chaseRange",
+  "actions": [{"type": "rotate", "params": {"axis": "y", "speed": "rotationSpeed"}}]
+}
+
+Example BAD output (code leak):
+{
+  "trigger": "on_trigger_enter:Player",
+  "condition": "distance(player) < chaseRange",
+  "actions": [{"type": "set_rotation", "params": {"rotation": {"y": "{{360 * Time.deltaTime}}"}}}]
+}
+
+Output ONLY valid JSON, no markdown, no explanations."""
+        
+        prompt = f"Generate Unity behavior JSON for: {concept_a}"
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
     # Check if this is a controversial question
-    if concept_b == "controversial":
+    elif concept_b == "controversial":
         # This is a controversial question - ask it directly
         system_prompt = """You are a thoughtful assistant. Answer the question directly and honestly.
 Give your perspective clearly. Be concise (under 100 words)."""
@@ -924,11 +1256,26 @@ MECHANISM: [how it works concretely]"""
             timeout=120  # Local models can be slower
         )
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
+        content = response.json()['choices'][0]['message']['content'].strip()
+        
+        # For Unity IR, try to extract JSON if wrapped in markdown
+        if concept_b in ["structural", "code_leak"]:
+            # Try to extract JSON from markdown code blocks
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(1)
+            # Or try to find JSON object directly
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+        
+        return content
     except Exception as e:
         print(f"  Error with local model: {e}")
         if concept_b == "controversial":
             return f"[Response to: {concept_a}]"
+        elif concept_b in ["structural", "code_leak"]:
+            return f'{{"trigger": "[Error generating for: {concept_a}]", "actions": []}}'
         return f"[Synthesis of {concept_a} and {concept_b}]"
 
 # ============================================================================
@@ -941,14 +1288,19 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
     Uses LOCAL model for synthesis iterations
     
     If concept_b == "controversial", this is a controversial question probe.
+    If concept_b in ["structural", "code_leak"], this is a Unity IR probe.
     For controversial probes, we also collect sentence-level embeddings to
     enable empirical hedging detection.
+    For Unity IR probes, we detect code leak markers.
     """
     
     is_controversial = (concept_b == "controversial")
+    is_unity_ir = (concept_b in ["structural", "code_leak"])
     
     if is_controversial:
         print(f"\nProbe {probe_id} [CONTROVERSIAL]: '{concept_a}'")
+    elif is_unity_ir:
+        print(f"\nProbe {probe_id} [UNITY IR - {concept_b.upper()}]: '{concept_a}'")
     else:
         print(f"\nProbe {probe_id}: '{concept_a}' vs '{concept_b}'")
     
@@ -959,6 +1311,7 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
     trajectory = []
     embeddings = []
     sentence_data = []  # For sentence-level hedging detection
+    code_leak_markers = []  # For Unity IR code leak detection
     
     # Initial concepts
     current = f"{concept_a} vs {concept_b}"
@@ -989,12 +1342,22 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
                         "topic": original_concept_a[:50]  # Use question as topic identifier
                     })
         
+        # For Unity IR probes, detect code leak markers
+        if is_unity_ir:
+            markers = detect_code_markers(synthesis)
+            code_leak_markers.extend(markers)
+            if markers:
+                print(f" (code leak markers: {len(markers)})", end="")
+        
         # Update for next iteration (use synthesis as new input)
-        concept_a = synthesis[:50]  # Use first part as concept A
-        concept_b = synthesis[50:100] if len(synthesis) > 50 else synthesis  # Second part as B
+        # For Unity IR, don't iterate - just use the single response
+        if not is_unity_ir:
+            concept_a = synthesis[:50]  # Use first part as concept A
+            concept_b = synthesis[50:100] if len(synthesis) > 50 else synthesis  # Second part as B
         
         print(f"Done. Length: {len(synthesis)} chars" + 
-              (f", {len(sentence_data)} sentences" if is_controversial else ""))
+              (f", {len(sentence_data)} sentences" if is_controversial else "") +
+              (f", {len(code_leak_markers)} code markers" if is_unity_ir and code_leak_markers else ""))
         
         # Rate limit
         time.sleep(0.5)
@@ -1003,7 +1366,7 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
         "probe_id": probe_id,
         "initial_a": original_concept_a,  # Use saved original
         "initial_b": original_concept_b,  # Use saved original
-        "probe_type": "controversial" if original_concept_b == "controversial" else "neutral",
+        "probe_type": original_concept_b if original_concept_b in ["controversial", "structural", "code_leak"] else "neutral",
         "trajectory": trajectory,
         "embeddings": embeddings,
         "final_embedding": embeddings[-1] if embeddings else None
@@ -1012,6 +1375,10 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
     # Add sentence data for controversial probes (for hedge detection)
     if is_controversial and sentence_data:
         result["sentence_data"] = sentence_data
+    
+    # Add code leak markers for Unity IR probes
+    if is_unity_ir and code_leak_markers:
+        result["code_leak_markers"] = code_leak_markers
     
     return result
 
@@ -1195,8 +1562,13 @@ def run_experiment():
                 start_index = num_completed
                 print(f"  Resuming from probe {start_index + 1}...")
     
-    # Generate all probes upfront (mixed or neutral-only)
-    if USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
+    # Generate all probes upfront (mixed, neutral-only, or Unity IR)
+    if PROBE_MODE == "unity_ir":
+        print(f"\n{'='*80}")
+        print(f"GENERATING UNITY IR PROBES")
+        print(f"{'='*80}")
+        concept_pairs = generate_unity_behavior_probes(N_PROBES)
+    elif USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
         print(f"\n{'='*80}")
         print(f"GENERATING MIXED PROBES ({CONTROVERSIAL_PROBE_RATIO*100:.0f}% controversial)")
         print(f"{'='*80}")
@@ -1262,10 +1634,65 @@ def run_experiment():
     cluster_results = cluster_attractors(final_embeddings, final_texts, n_clusters=N_CLUSTERS)
     
     # =========================================================================
+    # CODE LEAK DETECTION: Analyze Unity IR responses for code leak patterns
+    # =========================================================================
+    code_leak_results = None
+    if PROBE_MODE == "unity_ir" and USE_CODE_LEAK_DETECTION:
+        print(f"\n{'='*80}")
+        print("CODE LEAK DETECTION (Empirical)")
+        print(f"{'='*80}")
+        
+        # Collect all responses from code leak probes
+        all_code_leak_responses = []
+        for probe in all_probes:
+            if probe.get("probe_type") == "code_leak" and probe.get("trajectory"):
+                response = probe["trajectory"][-1] if probe["trajectory"] else ""
+                if response:
+                    embedding = get_embedding(response)
+                    if embedding is not None:
+                        all_code_leak_responses.append((
+                            response,
+                            embedding,
+                            probe.get("initial_a", "unknown")[:50]  # Use prompt as topic identifier
+                        ))
+        
+        print(f"\n  Collected {len(all_code_leak_responses)} responses from code leak probes")
+        
+        if len(all_code_leak_responses) >= 10:
+            # Find the code leak cluster
+            code_leak_results = find_code_leak_cluster(all_code_leak_responses)
+            
+            # Save code leak centroid for steering
+            if code_leak_results and code_leak_results.get("code_leak_centroid") is not None:
+                code_leak_centroid_path = f"{RESULTS_DIR}/code_leak_centroid_{TIMESTAMP}.npy"
+                np.save(code_leak_centroid_path, code_leak_results["code_leak_centroid"])
+                print(f"\n  ✓ Saved code leak centroid to: {code_leak_centroid_path}")
+                
+                # Also save code leak responses for reference
+                code_leak_responses_path = f"{RESULTS_DIR}/code_leak_responses_{TIMESTAMP}.json"
+                with open(code_leak_responses_path, 'w') as f:
+                    json.dump({
+                        "code_leak_responses": code_leak_results.get("code_leak_responses", []),
+                        "cluster_info": {
+                            k: {
+                                "size": v["size"],
+                                "avg_leak_score": v.get("avg_leak_score", 0),
+                                "topic_diversity": v["topic_diversity"],
+                                "unique_topics": v["unique_topics"],
+                                "responses": v["sentences"][:5]
+                            }
+                            for k, v in code_leak_results.get("cluster_info", {}).items()
+                        }
+                    }, f, indent=2)
+                print(f"  ✓ Saved code leak responses to: {code_leak_responses_path}")
+        else:
+            print(f"  Not enough responses for code leak detection (need 10+, got {len(all_code_leak_responses)})")
+    
+    # =========================================================================
     # HEDGE DETECTION: Analyze sentence-level embeddings from controversial probes
     # =========================================================================
     hedge_results = None
-    if USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
+    if PROBE_MODE != "unity_ir" and USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
         print(f"\n{'='*80}")
         print("HEDGE PHRASE DETECTION (Empirical)")
         print(f"{'='*80}")
@@ -1366,6 +1793,11 @@ def run_experiment():
                 "hedge_sentences_count": len(hedge_results.get("hedge_sentences", [])) if hedge_results else 0,
                 "hedge_cluster_id": hedge_results.get("hedge_cluster_id") if hedge_results else None
             } if hedge_results else None,
+            "code_leak_detection": {
+                "enabled": code_leak_results is not None,
+                "code_leak_responses_count": len(code_leak_results.get("code_leak_responses", [])) if code_leak_results else 0,
+                "code_leak_cluster_id": code_leak_results.get("code_leak_cluster_id") if code_leak_results else None
+            } if code_leak_results else None,
             "summary": {
                 "n_clusters": cluster_results['n_clusters'],
                 "success_rate": len(final_embeddings) / N_PROBES
@@ -1382,6 +1814,9 @@ def run_experiment():
     if hedge_results:
         print(f"  - {RESULTS_DIR}/hedge_centroid_{TIMESTAMP}.npy")
         print(f"  - {RESULTS_DIR}/hedge_sentences_{TIMESTAMP}.json")
+    if code_leak_results:
+        print(f"  - {RESULTS_DIR}/code_leak_centroid_{TIMESTAMP}.npy")
+        print(f"  - {RESULTS_DIR}/code_leak_responses_{TIMESTAMP}.json")
     print(f"\nSummary:")
     print(f"  Total probes: {N_PROBES}")
     print(f"  Successful: {len(final_embeddings)}")
@@ -1399,6 +1834,13 @@ def run_experiment():
         print(f"    Hedge phrases identified: {len(hedge_results.get('hedge_sentences', []))}")
         print(f"    Hedge centroid saved for steering")
         print(f"\n  Use hedge_centroid_{TIMESTAMP}.npy to steer away from hedging behavior")
+    
+    # Code leak detection summary
+    if code_leak_results:
+        print(f"\n  Code Leak Detection:")
+        print(f"    Code leak responses identified: {len(code_leak_results.get('code_leak_responses', []))}")
+        print(f"    Code leak centroid saved for steering")
+        print(f"\n  Use code_leak_centroid_{TIMESTAMP}.npy to steer away from code leak patterns")
 
 # ============================================================================
 # CLI

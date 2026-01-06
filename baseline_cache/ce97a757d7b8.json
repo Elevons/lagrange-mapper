@@ -1,0 +1,28 @@
+{
+  "prompt": "easing animation curve",
+  "prompt_hash": "ce97a757d7b8",
+  "n_fields": 4,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "movementCurve",
+    "animationDuration",
+    "targetPosition",
+    "isLooping"
+  ],
+  "component_names": [
+    "Animation",
+    "Transform"
+  ],
+  "action_types": [
+    "interpolate",
+    "reset to original position",
+    "stop animation"
+  ],
+  "actions_per_behavior": [
+    1,
+    2
+  ]
+}

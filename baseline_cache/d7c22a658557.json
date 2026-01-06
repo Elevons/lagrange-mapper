@@ -1,0 +1,25 @@
+{
+  "prompt": "object rotating at variable speed",
+  "prompt_hash": "d7c22a658557",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 1,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "rotationSpeed",
+    "rotationAxis",
+    "isRotating"
+  ],
+  "component_names": [
+    "Transform"
+  ],
+  "action_types": [
+    "toggle",
+    "rotate"
+  ],
+  "actions_per_behavior": [
+    1,
+    1
+  ]
+}

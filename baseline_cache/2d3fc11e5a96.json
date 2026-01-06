@@ -1,0 +1,29 @@
+{
+  "prompt": "weapon toggling between fire modes",
+  "prompt_hash": "2d3fc11e5a96",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "currentFireMode",
+    "availableFireModes",
+    "switchCooldown"
+  ],
+  "component_names": [
+    "Weapon",
+    "AudioSource"
+  ],
+  "action_types": [
+    "show_ui_notification",
+    "change_weapon_mode",
+    "set_fire_rate",
+    "set_bullet_spread",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    3,
+    2
+  ]
+}

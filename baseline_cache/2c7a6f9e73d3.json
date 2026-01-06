@@ -1,0 +1,30 @@
+{
+  "prompt": "simple text display",
+  "prompt_hash": "2c7a6f9e73d3",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "displayMessage",
+    "displayDuration",
+    "textColor"
+  ],
+  "component_names": [
+    "Text",
+    "Canvas"
+  ],
+  "action_types": [
+    "update text",
+    "hide after duration",
+    "set text color",
+    "show text",
+    "display text",
+    "set text content"
+  ],
+  "actions_per_behavior": [
+    4,
+    2
+  ]
+}

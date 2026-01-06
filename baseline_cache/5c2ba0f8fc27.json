@@ -1,0 +1,27 @@
+{
+  "prompt": "player movement with WASD",
+  "prompt_hash": "5c2ba0f8fc27",
+  "n_fields": 3,
+  "n_behaviors": 3,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "moveSpeed",
+    "jumpForce",
+    "isGrounded"
+  ],
+  "component_names": [
+    "Rigidbody",
+    "Collider"
+  ],
+  "action_types": [
+    "move",
+    "apply_force"
+  ],
+  "actions_per_behavior": [
+    1,
+    1,
+    1
+  ]
+}

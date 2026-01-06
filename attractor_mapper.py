@@ -12,14 +12,18 @@ import os
 import json
 import requests
 import numpy as np
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import time
 import random
 from datetime import datetime
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from collections import Counter
+import hashlib
+from pathlib import Path
+import re
 
 # ============================================================================
 # CONFIGURATION
@@ -61,6 +65,23 @@ CONTROVERSIAL_PROBE_RATIO = 0.5   # Default: 50% controversial, 50% neutral conc
 # Unity IR mode (can be injected by pipeline runner)
 PROBE_MODE = "controversial"  # Options: "controversial", "concept_pairs", "unity_ir"
 USE_CODE_LEAK_DETECTION = True  # Enable code leak pattern detection for Unity IR
+
+# ============================================================================
+# REFERENCE MODEL CONFIGURATION (for baseline generation)
+# ============================================================================
+
+# Anthropic API (Claude Haiku) - can be injected by pipeline runner
+REFERENCE_MODEL = "claude-3-5-haiku-20241022"
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
+# Local fallback
+LOCAL_REFERENCE_URL = "http://localhost:1234/v1/chat/completions"
+LOCAL_REFERENCE_MODEL = "reference-model"
+
+# Baseline cache
+BASELINE_CACHE_DIR = "baseline_cache"
+GENERATE_BASELINES = True  # Set to True to generate baselines during pipeline
+N_STRUCTURAL_CLUSTERS = 5  # Number of structural cliché clusters to find
 
 # Output
 RESULTS_DIR = "lagrange_mapping_results"
@@ -247,9 +268,10 @@ CONTROVERSIAL_QUESTIONS = [
 
 CODE_LEAK_PATTERNS = {
     "operators": [
-        r"==|!=|<=|>=|&&|\|\||!",
-        r"\+|\-|\*|/|%",
-        r"<|>",
+        r"==|!=|<=|>=|&&|\|\|",  # Comparison and logical operators (unambiguous)
+        r"(?<=[a-zA-Z0-9_\s])[+*/%](?=[a-zA-Z0-9_\s])",  # Math operators in expression context
+        r"(?<=[a-zA-Z0-9_])\s+-\s+(?=[a-zA-Z0-9_])",  # Minus with spaces (not negative numbers or hyphens)
+        r"(?<=[a-zA-Z_])\s*[<>]\s*(?=[a-zA-Z0-9_])",  # Comparison operators between identifiers
     ],
     "unity_api": [
         r"Vector3\.",
@@ -358,14 +380,18 @@ def segment_into_sentences(text: str) -> List[str]:
 
 def embed_sentences(text: str) -> List[Tuple[str, np.ndarray]]:
     """
-    Segment text into sentences and embed each one.
+    Segment text into sentences and embed each one using batch embedding.
     Returns list of (sentence, embedding) tuples.
     """
     sentences = segment_into_sentences(text)
-    results = []
+    if not sentences:
+        return []
     
-    for sentence in sentences:
-        embedding = get_embedding(sentence)
+    # Use batch embedding for efficiency
+    embeddings = batch_embed(sentences, show_progress=False)
+    
+    results = []
+    for sentence, embedding in zip(sentences, embeddings):
         if embedding is not None:
             results.append((sentence, embedding))
     
@@ -905,22 +931,99 @@ def get_embedding(text: str) -> np.ndarray:
         print(f"  Error getting embedding: {e}")
         return None
 
-def batch_embed(texts: List[str]) -> List[np.ndarray]:
-    """Embed multiple texts (with fallback to sequential)"""
-    embeddings = []
-    for text in texts:
-        emb = get_embedding(text)
+
+# Maximum batch size for embedding requests
+EMBEDDING_BATCH_SIZE = 300
+
+
+def batch_embed(texts: List[str], show_progress: bool = True) -> List[Optional[np.ndarray]]:
+    """
+    Embed multiple texts in batches of up to EMBEDDING_BATCH_SIZE.
+    
+    Uses true batching - sends multiple texts in a single API call.
+    Returns list of embeddings (or None for failures) in same order as input.
+    """
+    if not texts:
+        return []
+    
+    all_embeddings = [None] * len(texts)
+    
+    # Process in batches
+    n_batches = (len(texts) + EMBEDDING_BATCH_SIZE - 1) // EMBEDDING_BATCH_SIZE
+    
+    for batch_idx in range(n_batches):
+        start_idx = batch_idx * EMBEDDING_BATCH_SIZE
+        end_idx = min(start_idx + EMBEDDING_BATCH_SIZE, len(texts))
+        batch_texts = texts[start_idx:end_idx]
+        
+        if show_progress and n_batches > 1:
+            print(f"    Embedding batch {batch_idx + 1}/{n_batches} ({len(batch_texts)} texts)...")
+        
+        try:
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "model": LOCAL_EMBEDDING_MODEL,
+                "input": batch_texts  # Send multiple texts at once
+            }
+            
+            response = requests.post(
+                LOCAL_EMBEDDING_URL,
+                headers=headers,
+                json=payload,
+                timeout=120  # Longer timeout for batch
+            )
+            
+            if response.status_code == 200:
+                data = response.json()['data']
+                # API returns embeddings with index field - sort by index to maintain order
+                sorted_data = sorted(data, key=lambda x: x.get('index', 0))
+                
+                for i, item in enumerate(sorted_data):
+                    embedding = item['embedding']
+                    vec = np.array(embedding, dtype=float)
+                    # Normalize
+                    norm = np.linalg.norm(vec)
+                    if norm > 0:
+                        vec = vec / norm
+                    all_embeddings[start_idx + i] = vec
+            else:
+                print(f"    Warning: Batch embedding failed with status {response.status_code}")
+                # Fall back to sequential for this batch
+                for i, text in enumerate(batch_texts):
+                    emb = get_embedding(text)
+                    all_embeddings[start_idx + i] = emb
+                    
+        except Exception as e:
+            print(f"    Error in batch embedding: {e}")
+            # Fall back to sequential for this batch
+            for i, text in enumerate(batch_texts):
+                emb = get_embedding(text)
+                all_embeddings[start_idx + i] = emb
+    
+    return all_embeddings
+
+
+def batch_embed_with_fallback(texts: List[str], show_progress: bool = True) -> List[np.ndarray]:
+    """
+    Embed multiple texts with hash-based fallback for failures.
+    Always returns an embedding for each input (never None).
+    """
+    embeddings = batch_embed(texts, show_progress)
+    
+    result = []
+    for i, emb in enumerate(embeddings):
         if emb is not None:
-            embeddings.append(emb)
+            result.append(emb)
         else:
             # Fallback: use hash-based embedding
             import hashlib
-            hash_obj = hashlib.sha256(text.encode())
+            hash_obj = hashlib.sha256(texts[i].encode())
             hash_bytes = hash_obj.digest()
             vec = np.frombuffer(hash_bytes, dtype=np.uint8).astype(float)
             vec = vec / np.linalg.norm(vec)
-            embeddings.append(vec)
-    return embeddings
+            result.append(vec)
+    
+    return result
 
 # ============================================================================
 # PROBE GENERATION (using Claude)
@@ -1155,6 +1258,197 @@ CONCEPT_B: [contrasting concept]"""
         return random.sample(CONCEPT_POOL, 2)
 
 # ============================================================================
+# UNITY IR SYSTEM PROMPT (shared between target and reference models)
+# ============================================================================
+
+UNITY_IR_SYSTEM_PROMPT = """You generate Unity game behavior JSON in natural language format.
+
+Output JSON with:
+- "class_name": name of the behavior class
+- "components": array of Unity component names
+- "fields": array of field definitions with name, type, default
+- "behaviors": array of behavior objects with name, trigger, condition, actions
+- "state": optional state machine object with has_state_machine, states
+
+CRITICAL: Use NATURAL LANGUAGE, not programming syntax.
+- NO operators like ==, <, >, ||
+- NO Unity API calls like Vector3.up, Time.deltaTime
+- NO function calls like distance(player)
+- NO template syntax like {{360 * Time.deltaTime}}
+- NO method names like on_trigger_enter
+
+Example GOOD output:
+{
+  "class_name": "ProximityLight",
+  "components": ["Light"],
+  "fields": [
+    {"name": "detectionRadius", "type": "float", "default": 5}
+  ],
+  "behaviors": [
+    {
+      "name": "activate_on_proximity",
+      "trigger": "player enters detectionRadius",
+      "condition": "light is off",
+      "actions": [{"type": "enable", "params": {"target": "light"}}]
+    }
+  ]
+}
+
+Output ONLY valid JSON, no markdown, no explanations."""
+
+# ============================================================================
+# BASELINE GENERATION FUNCTIONS
+# ============================================================================
+
+def call_reference_model(prompt: str) -> Optional[str]:
+    """
+    Call reference model (Claude Haiku) to generate baseline JSON.
+    Falls back to local model if Anthropic API unavailable.
+    """
+    # Try Anthropic first
+    if ANTHROPIC_API_KEY:
+        try:
+            response = requests.post(
+                ANTHROPIC_API_URL,
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "content-type": "application/json",
+                    "anthropic-version": "2023-06-01"
+                },
+                json={
+                    "model": REFERENCE_MODEL,
+                    "max_tokens": 2048,
+                    "system": UNITY_IR_SYSTEM_PROMPT,
+                    "messages": [
+                        {"role": "user", "content": f"Generate Unity behavior JSON for: {prompt}"}
+                    ]
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()["content"][0]["text"].strip()
+        except Exception as e:
+            print(f"  Anthropic API failed: {e}, trying local fallback")
+    
+    # Fallback to local
+    try:
+        response = requests.post(
+            LOCAL_REFERENCE_URL,
+            json={
+                "model": LOCAL_REFERENCE_MODEL,
+                "messages": [
+                    {"role": "system", "content": UNITY_IR_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Generate Unity behavior JSON for: {prompt}"}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 2048
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"  Local reference model failed: {e}")
+        return None
+
+
+def extract_json_from_response(response: str) -> Optional[Dict]:
+    """Extract JSON from model response"""
+    # Direct parse
+    try:
+        return json.loads(response)
+    except json.JSONDecodeError:
+        pass
+    
+    # Find in markdown
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+    
+    # Find raw object
+    match = re.search(r'\{[\s\S]*\}', response)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    
+    return None
+
+
+def extract_structural_features(parsed: Dict, prompt: str, prompt_hash: str) -> Dict:
+    """Extract structural features from parsed JSON for baseline"""
+    
+    fields = parsed.get("fields", [])
+    behaviors = parsed.get("behaviors", [])
+    state = parsed.get("state", {})
+    
+    return {
+        "prompt": prompt,
+        "prompt_hash": prompt_hash,
+        "n_fields": len(fields),
+        "n_behaviors": len(behaviors),
+        "n_components": len(parsed.get("components", [])),
+        "has_state_machine": state.get("has_state_machine", False) if isinstance(state, dict) else False,
+        "n_states": len(state.get("states", [])) if isinstance(state, dict) else 0,
+        "field_names": [f.get("name", "") for f in fields if isinstance(f, dict)],
+        "component_names": parsed.get("components", []),
+        "action_types": list(set(
+            a.get("type", "")
+            for b in behaviors
+            if isinstance(b, dict)
+            for a in b.get("actions", [])
+            if isinstance(a, dict)
+        )),
+        "actions_per_behavior": [
+            len(b.get("actions", [])) for b in behaviors if isinstance(b, dict)
+        ],
+    }
+
+
+def generate_baseline(prompt: str, cache_dir: str = BASELINE_CACHE_DIR) -> Optional[Dict]:
+    """
+    Generate baseline from reference model and cache it.
+    Returns extracted structural features.
+    """
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(parents=True, exist_ok=True)
+    
+    prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:12]
+    cache_file = cache_path / f"{prompt_hash}.json"
+    
+    # Check cache first
+    if cache_file.exists():
+        try:
+            with open(cache_file) as f:
+                return json.load(f)
+        except:
+            pass
+    
+    # Generate from reference model
+    response = call_reference_model(prompt)
+    if response is None:
+        return None
+    
+    # Parse JSON
+    parsed = extract_json_from_response(response)
+    if parsed is None:
+        return None
+    
+    # Extract structural features
+    baseline = extract_structural_features(parsed, prompt, prompt_hash)
+    
+    # Cache it
+    with open(cache_file, 'w') as f:
+        json.dump(baseline, f, indent=2)
+    
+    return baseline
+
+
+# ============================================================================
 # SYNTHESIS FUNCTION (using LOCAL model)
 # ============================================================================
 
@@ -1172,35 +1466,7 @@ def synthesize_concepts(concept_a: str, concept_b: str) -> str:
     # Check if this is a Unity IR probe
     if concept_b in ["structural", "code_leak"]:
         # This is a Unity behavior prompt - generate IR JSON
-        system_prompt = """You generate Unity game behavior JSON in natural language format.
-
-Output JSON with:
-- "trigger": natural language description (e.g., "player touches this")
-- "condition": natural language condition (e.g., "player is within chaseRange")
-- "actions": array of action objects with "type" and "params"
-
-CRITICAL: Use NATURAL LANGUAGE, not programming syntax.
-- NO operators like ==, <, >, ||
-- NO Unity API calls like Vector3.up, Time.deltaTime
-- NO function calls like distance(player)
-- NO template syntax like {{360 * Time.deltaTime}}
-- NO method names like on_trigger_enter
-
-Example GOOD output:
-{
-  "trigger": "player touches this",
-  "condition": "player is within chaseRange",
-  "actions": [{"type": "rotate", "params": {"axis": "y", "speed": "rotationSpeed"}}]
-}
-
-Example BAD output (code leak):
-{
-  "trigger": "on_trigger_enter:Player",
-  "condition": "distance(player) < chaseRange",
-  "actions": [{"type": "set_rotation", "params": {"rotation": {"y": "{{360 * Time.deltaTime}}"}}}]
-}
-
-Output ONLY valid JSON, no markdown, no explanations."""
+        system_prompt = UNITY_IR_SYSTEM_PROMPT
         
         prompt = f"Generate Unity behavior JSON for: {concept_a}"
         
@@ -1333,14 +1599,16 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
         # This enables empirical hedging detection
         if is_controversial:
             sentences = segment_into_sentences(synthesis)
-            for sentence in sentences:
-                sent_embedding = get_embedding(sentence)
-                if sent_embedding is not None:
-                    sentence_data.append({
-                        "sentence": sentence,
-                        "embedding": sent_embedding,
-                        "topic": original_concept_a[:50]  # Use question as topic identifier
-                    })
+            if sentences:
+                # Batch embed all sentences at once
+                sent_embeddings = batch_embed(sentences, show_progress=False)
+                for sentence, sent_embedding in zip(sentences, sent_embeddings):
+                    if sent_embedding is not None:
+                        sentence_data.append({
+                            "sentence": sentence,
+                            "embedding": sent_embedding,
+                            "topic": original_concept_a[:50]  # Use question as topic identifier
+                        })
         
         # For Unity IR probes, detect code leak markers
         if is_unity_ir:
@@ -1369,8 +1637,17 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
         "probe_type": original_concept_b if original_concept_b in ["controversial", "structural", "code_leak"] else "neutral",
         "trajectory": trajectory,
         "embeddings": embeddings,
-        "final_embedding": embeddings[-1] if embeddings else None
+        "final_embedding": embeddings[-1] if embeddings else None,
+        "response": trajectory[-1] if trajectory else None,  # Store final response for structural clustering
+        "prompt": original_concept_a  # Store prompt for baseline comparison
     }
+    
+    # Generate baseline from reference model (if enabled and Unity IR)
+    if is_unity_ir and GENERATE_BASELINES:
+        baseline = generate_baseline(original_concept_a)
+        if baseline:
+            result["baseline"] = baseline
+            print(f"  Baseline: {baseline['n_fields']}f, {baseline['n_behaviors']}b, sm={baseline['has_state_machine']}")
     
     # Add sentence data for controversial probes (for hedge detection)
     if is_controversial and sentence_data:
@@ -1381,6 +1658,380 @@ def run_probe(probe_id: int, concept_a: str, concept_b: str) -> Dict:
         result["code_leak_markers"] = code_leak_markers
     
     return result
+
+# ============================================================================
+# STRUCTURAL ANALYSIS FUNCTIONS
+# ============================================================================
+
+def extract_json_features(json_str: str) -> Optional[Dict]:
+    """
+    Extract structural features from Unity IR JSON.
+    
+    Returns:
+        Dict with features like:
+        - n_fields: number of fields
+        - n_behaviors: number of behaviors
+        - has_state_machine: boolean
+        - components: tuple of component names
+        - action_types: tuple of action types
+        - has_conditions: boolean
+        - max_actions_per_behavior: int
+    """
+    try:
+        data = json.loads(json_str)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    
+    features = {}
+    
+    # Count fields
+    if isinstance(data, dict):
+        # Count top-level fields (excluding behaviors)
+        fields = data.get("fields", [])
+        if isinstance(fields, list):
+            features["n_fields"] = len(fields)
+        else:
+            features["n_fields"] = 0
+        
+        # Count behaviors
+        behaviors = data.get("behaviors", [])
+        if isinstance(behaviors, list):
+            features["n_behaviors"] = len(behaviors)
+        else:
+            features["n_behaviors"] = 0
+        
+        # Check for state machine patterns
+        # Look for state-related fields or multiple behaviors with state transitions
+        has_state = False
+        if "state" in data or "states" in data:
+            has_state = True
+        elif features["n_behaviors"] > 2:
+            # Multiple behaviors might indicate state machine
+            # Check if behaviors reference each other or have state-like names
+            behavior_names = [b.get("name", "").lower() if isinstance(b, dict) else "" 
+                            for b in behaviors]
+            state_keywords = ["state", "idle", "patrol", "chase", "attack", "transition"]
+            if any(keyword in name for name in behavior_names for keyword in state_keywords):
+                has_state = True
+        
+        features["has_state_machine"] = has_state
+        
+        # Extract components
+        components = data.get("components", [])
+        if isinstance(components, list):
+            features["components"] = tuple(sorted([str(c).lower() for c in components]))
+        else:
+            features["components"] = tuple()
+        
+        # Extract action types from all behaviors
+        action_types = set()
+        max_actions = 0
+        has_conditions = False
+        
+        for behavior in behaviors:
+            if not isinstance(behavior, dict):
+                continue
+            
+            # Check for conditions
+            if behavior.get("condition") is not None:
+                has_conditions = True
+            
+            # Extract actions
+            actions = behavior.get("actions", [])
+            if isinstance(actions, list):
+                max_actions = max(max_actions, len(actions))
+                for action in actions:
+                    if isinstance(action, dict):
+                        action_type = action.get("type", "")
+                        if action_type:
+                            action_types.add(str(action_type).lower())
+        
+        features["action_types"] = tuple(sorted(action_types))
+        features["max_actions_per_behavior"] = max_actions
+        features["has_conditions"] = has_conditions
+        
+        # Additional complexity metrics
+        features["total_actions"] = sum(
+            len(b.get("actions", [])) if isinstance(b, dict) else 0
+            for b in behaviors
+        )
+        
+        # Check for class_name (indicates structured output)
+        features["has_class_name"] = "class_name" in data
+        
+    else:
+        # Not a dict, minimal features
+        features = {
+            "n_fields": 0,
+            "n_behaviors": 0,
+            "has_state_machine": False,
+            "components": tuple(),
+            "action_types": tuple(),
+            "max_actions_per_behavior": 0,
+            "has_conditions": False,
+            "total_actions": 0,
+            "has_class_name": False
+        }
+    
+    return features
+
+
+def extract_structure_vector(parsed: Dict) -> Optional[List]:
+    """
+    Convert JSON structure to numeric vector for clustering.
+    """
+    try:
+        fields = parsed.get("fields", [])
+        behaviors = parsed.get("behaviors", [])
+        state = parsed.get("state", {})
+        components = parsed.get("components", [])
+        
+        # Numeric features
+        n_fields = len(fields)
+        n_behaviors = len(behaviors)
+        n_components = len(components)
+        has_sm = 1 if (isinstance(state, dict) and state.get("has_state_machine", False)) else 0
+        n_states = len(state.get("states", [])) if isinstance(state, dict) else 0
+        
+        # Action count features
+        action_counts = [len(b.get("actions", [])) for b in behaviors if isinstance(b, dict)]
+        total_actions = sum(action_counts)
+        max_actions = max(action_counts) if action_counts else 0
+        avg_actions = total_actions / len(behaviors) if behaviors else 0
+        
+        # Component flags (common ones)
+        has_rigidbody = 1 if "Rigidbody" in components else 0
+        has_collider = 1 if any("Collider" in str(c) for c in components) else 0
+        has_navmesh = 1 if "NavMeshAgent" in components else 0
+        has_animator = 1 if "Animator" in components else 0
+        
+        # Field name flags (common patterns)
+        field_names_lower = {f.get("name", "").lower() for f in fields if isinstance(f, dict)}
+        has_player_field = 1 if "player" in field_names_lower else 0
+        has_speed_field = 1 if any("speed" in fn for fn in field_names_lower) else 0
+        has_health_field = 1 if "health" in field_names_lower else 0
+        
+        return [
+            n_fields,
+            n_behaviors,
+            n_components,
+            has_sm,
+            n_states,
+            total_actions,
+            max_actions,
+            avg_actions,
+            has_rigidbody,
+            has_collider,
+            has_navmesh,
+            has_animator,
+            has_player_field,
+            has_speed_field,
+            has_health_field,
+        ]
+    except:
+        return None
+
+
+def extract_common_pattern(probes: List[Dict]) -> Dict:
+    """
+    Extract common structural pattern from a cluster of probes.
+    """
+    pattern = {}
+    
+    # Parse all JSONs
+    parsed_list = []
+    for probe in probes:
+        try:
+            response = probe.get("response") or (probe.get("trajectory", [])[-1] if probe.get("trajectory") else None)
+            if response is None:
+                continue
+            parsed = json.loads(response) if isinstance(response, str) else response
+            parsed_list.append(parsed)
+        except:
+            continue
+    
+    if not parsed_list:
+        return pattern
+    
+    n = len(parsed_list)
+    
+    # Field count stats
+    field_counts = [len(p.get("fields", [])) for p in parsed_list]
+    pattern["field_count_range"] = [min(field_counts), max(field_counts)]
+    pattern["field_count_avg"] = sum(field_counts) / n
+    
+    # Behavior count stats
+    behavior_counts = [len(p.get("behaviors", [])) for p in parsed_list]
+    pattern["behavior_count_range"] = [min(behavior_counts), max(behavior_counts)]
+    pattern["behavior_count_avg"] = sum(behavior_counts) / n
+    
+    # State machine prevalence
+    sm_count = sum(1 for p in parsed_list 
+                   if isinstance(p.get("state"), dict) and p.get("state", {}).get("has_state_machine", False))
+    sm_rate = sm_count / n
+    if sm_rate > 0.8:
+        pattern["always_has_state_machine"] = True
+    elif sm_rate < 0.2:
+        pattern["never_has_state_machine"] = True
+    pattern["state_machine_rate"] = sm_rate
+    
+    # Common components (appear in >60% of cluster)
+    component_counter = Counter()
+    for p in parsed_list:
+        component_counter.update(p.get("components", []))
+    common_components = [c for c, count in component_counter.items() if count / n > 0.6]
+    if common_components:
+        pattern["common_components"] = common_components
+    
+    # Common field names (appear in >50% of cluster)
+    field_name_counter = Counter()
+    for p in parsed_list:
+        field_name_counter.update(f.get("name", "").lower() for f in p.get("fields", []) if isinstance(f, dict))
+    common_fields = [f for f, count in field_name_counter.items() if count / n > 0.5 and f]
+    if common_fields:
+        pattern["common_field_names"] = common_fields
+    
+    # Common action types (appear in >50% of cluster)
+    action_type_counter = Counter()
+    for p in parsed_list:
+        for b in p.get("behaviors", []):
+            if isinstance(b, dict):
+                action_type_counter.update(a.get("type", "") for a in b.get("actions", []) if isinstance(a, dict))
+    common_actions = [a for a, count in action_type_counter.items() if count / n > 0.5 and a]
+    if common_actions:
+        pattern["common_action_types"] = common_actions
+    
+    return pattern
+
+
+def name_structural_pattern(pattern: Dict) -> str:
+    """Generate a descriptive name for a structural pattern"""
+    
+    parts = []
+    
+    # State machine characteristic
+    if pattern.get("always_has_state_machine"):
+        parts.append("stateful")
+    elif pattern.get("never_has_state_machine"):
+        parts.append("stateless")
+    
+    # Complexity
+    avg_fields = pattern.get("field_count_avg", 0)
+    avg_behaviors = pattern.get("behavior_count_avg", 0)
+    
+    if avg_fields < 2 and avg_behaviors < 2:
+        parts.append("minimal")
+    elif avg_fields > 4 or avg_behaviors > 4:
+        parts.append("complex")
+    else:
+        parts.append("moderate")
+    
+    # Common components
+    common_comps = pattern.get("common_components", [])
+    if "Rigidbody" in common_comps:
+        parts.append("physics")
+    if "NavMeshAgent" in common_comps:
+        parts.append("navigation")
+    if "Animator" in common_comps:
+        parts.append("animated")
+    
+    return "_".join(parts) if parts else "generic"
+
+
+def cluster_by_structure(probes: List[Dict], n_clusters: int = None) -> Dict:
+    """
+    Cluster probes by JSON structure to find structural clichés.
+    
+    Returns dict of structural attractors with patterns.
+    """
+    print("\n" + "="*80)
+    print("STRUCTURAL CLUSTERING")
+    print("="*80)
+    
+    # Extract structure vectors from all Unity IR probes
+    vectors = []
+    valid_probes = []
+    
+    for probe in probes:
+        # Skip non-Unity IR probes
+        probe_type = probe.get("probe_type", "")
+        if probe_type not in ["structural", "code_leak"]:
+            continue
+        
+        try:
+            response = probe.get("response") or (probe.get("trajectory", [])[-1] if probe.get("trajectory") else None)
+            if response is None:
+                continue
+            parsed = json.loads(response) if isinstance(response, str) else response
+            vec = extract_structure_vector(parsed)
+            if vec:
+                vectors.append(vec)
+                valid_probes.append({
+                    "response": response,
+                    "prompt": probe.get("initial_a", "unknown")[:50]
+                })
+        except:
+            continue
+    
+    if n_clusters is None:
+        n_clusters = N_STRUCTURAL_CLUSTERS
+    
+    if len(vectors) < n_clusters * 2:
+        print(f"  Not enough valid probes for structural clustering ({len(vectors)})")
+        return {}
+    
+    print(f"\n  Analyzing {len(vectors)} probes")
+    print(f"  Clustering into {n_clusters} groups...")
+    
+    # Cluster
+    vectors_array = np.array(vectors)
+    scaler = StandardScaler()
+    vectors_normalized = scaler.fit_transform(vectors_array)
+    
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(vectors_normalized)
+    
+    # Analyze each cluster for patterns
+    structural_attractors = {}
+    
+    for cluster_id in range(n_clusters):
+        cluster_mask = labels == cluster_id
+        cluster_probes = [p for p, m in zip(valid_probes, cluster_mask) if m]
+        cluster_size = len(cluster_probes)
+        
+        if cluster_size < 3:
+            continue
+        
+        prevalence = cluster_size / len(valid_probes)
+        
+        # Extract common pattern from cluster
+        pattern = extract_common_pattern(cluster_probes)
+        
+        # Name the pattern based on characteristics
+        pattern_name = name_structural_pattern(pattern)
+        
+        structural_attractors[f"structural_{cluster_id}"] = {
+            "name": pattern_name,
+            "type": "structural_cliche",
+            "pattern": pattern,
+            "prevalence": prevalence,
+            "sample_count": cluster_size,
+            "sample_prompts": [p["prompt"] for p in cluster_probes[:3]],
+        }
+    
+    print(f"\n  Found {len(structural_attractors)} structural patterns:")
+    for name, attractor in structural_attractors.items():
+        print(f"\n  {attractor['name']} ({attractor['prevalence']*100:.1f}% of outputs)")
+        pattern = attractor['pattern']
+        print(f"    Fields: {pattern.get('field_count_range', '?')}, avg={pattern.get('field_count_avg', 0):.1f}")
+        print(f"    Behaviors: {pattern.get('behavior_count_range', '?')}, avg={pattern.get('behavior_count_avg', 0):.1f}")
+        if pattern.get('common_components'):
+            print(f"    Common components: {pattern['common_components']}")
+        if pattern.get('common_field_names'):
+            print(f"    Common fields: {pattern['common_field_names']}")
+    
+    return structural_attractors
+
 
 # ============================================================================
 # ANALYSIS FUNCTIONS
@@ -1630,8 +2281,26 @@ def run_experiment():
     print(f"{'='*80}")
     print(f"\nSuccessful probes: {len(final_embeddings)}/{N_PROBES}")
     
-    # Cluster analysis
+    # Cluster analysis (embedding-based, for all probes)
     cluster_results = cluster_attractors(final_embeddings, final_texts, n_clusters=N_CLUSTERS)
+    
+    # =========================================================================
+    # STRUCTURAL ANALYSIS: Analyze structural probes by JSON shape
+    # =========================================================================
+    structural_results = None
+    if PROBE_MODE == "unity_ir":
+        print(f"\n{'='*80}")
+        print("STRUCTURAL PATTERN DETECTION")
+        print(f"{'='*80}")
+        
+        structural_results = cluster_by_structure(all_probes, n_clusters=min(6, len(all_probes) // 10))
+        
+        if structural_results:
+            # Save structural patterns for reference
+            structural_patterns_path = f"{RESULTS_DIR}/structural_patterns_{TIMESTAMP}.json"
+            with open(structural_patterns_path, 'w') as f:
+                json.dump(structural_results, f, indent=2, default=str)
+            print(f"\n  ✓ Saved structural patterns to: {structural_patterns_path}")
     
     # =========================================================================
     # CODE LEAK DETECTION: Analyze Unity IR responses for code leak patterns
@@ -1643,20 +2312,37 @@ def run_experiment():
         print(f"{'='*80}")
         
         # Collect all responses from code leak probes
-        all_code_leak_responses = []
+        responses_to_embed = []
+        response_metadata = []
+        
         for probe in all_probes:
             if probe.get("probe_type") == "code_leak" and probe.get("trajectory"):
                 response = probe["trajectory"][-1] if probe["trajectory"] else ""
                 if response:
-                    embedding = get_embedding(response)
-                    if embedding is not None:
-                        all_code_leak_responses.append((
-                            response,
-                            embedding,
-                            probe.get("initial_a", "unknown")[:50]  # Use prompt as topic identifier
-                        ))
+                    responses_to_embed.append(response)
+                    response_metadata.append({
+                        "response": response,
+                        "topic": probe.get("initial_a", "unknown")[:50]
+                    })
         
-        print(f"\n  Collected {len(all_code_leak_responses)} responses from code leak probes")
+        print(f"\n  Found {len(responses_to_embed)} code leak probe responses")
+        
+        # Batch embed all responses at once (up to 300 per batch)
+        all_code_leak_responses = []
+        if responses_to_embed:
+            print(f"  Batch embedding {len(responses_to_embed)} responses...")
+            embeddings = batch_embed(responses_to_embed, show_progress=True)
+            
+            # Pair embeddings with responses
+            for i, emb in enumerate(embeddings):
+                if emb is not None:
+                    all_code_leak_responses.append((
+                        response_metadata[i]["response"],
+                        emb,
+                        response_metadata[i]["topic"]
+                    ))
+        
+        print(f"  Successfully embedded {len(all_code_leak_responses)} responses")
         
         if len(all_code_leak_responses) >= 10:
             # Find the code leak cluster
@@ -1798,6 +2484,8 @@ def run_experiment():
                 "code_leak_responses_count": len(code_leak_results.get("code_leak_responses", [])) if code_leak_results else 0,
                 "code_leak_cluster_id": code_leak_results.get("code_leak_cluster_id") if code_leak_results else None
             } if code_leak_results else None,
+            "structural_analysis": structural_results if structural_results else None,
+            "baseline_cache_dir": BASELINE_CACHE_DIR if GENERATE_BASELINES else None,
             "summary": {
                 "n_clusters": cluster_results['n_clusters'],
                 "success_rate": len(final_embeddings) / N_PROBES
@@ -1817,6 +2505,8 @@ def run_experiment():
     if code_leak_results:
         print(f"  - {RESULTS_DIR}/code_leak_centroid_{TIMESTAMP}.npy")
         print(f"  - {RESULTS_DIR}/code_leak_responses_{TIMESTAMP}.json")
+    if structural_results:
+        print(f"  - {RESULTS_DIR}/structural_patterns_{TIMESTAMP}.json")
     print(f"\nSummary:")
     print(f"  Total probes: {N_PROBES}")
     print(f"  Successful: {len(final_embeddings)}")
@@ -1834,6 +2524,17 @@ def run_experiment():
         print(f"    Hedge phrases identified: {len(hedge_results.get('hedge_sentences', []))}")
         print(f"    Hedge centroid saved for steering")
         print(f"\n  Use hedge_centroid_{TIMESTAMP}.npy to steer away from hedging behavior")
+    
+    # Structural analysis summary
+    if structural_results:
+        print(f"\n  Structural Analysis:")
+        print(f"    Structural patterns identified: {len(structural_results)}")
+        for name, attractor in sorted(structural_results.items(), 
+                                   key=lambda x: x[1].get("sample_count", 0), reverse=True)[:3]:
+            pattern_name = attractor.get("name", "unknown")
+            sample_count = attractor.get("sample_count", 0)
+            prevalence = attractor.get("prevalence", 0) * 100
+            print(f"      - {pattern_name}: {sample_count} probes ({prevalence:.1f}%)")
     
     # Code leak detection summary
     if code_leak_results:

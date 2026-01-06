@@ -1,0 +1,33 @@
+{
+  "prompt": "AI that patrols then chases",
+  "prompt_hash": "136f4a9bd4d9",
+  "n_fields": 5,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 4,
+  "field_names": [
+    "patrolPoints",
+    "chaseSpeed",
+    "patrolSpeed",
+    "detectionRadius",
+    "currentPatrolIndex"
+  ],
+  "component_names": [
+    "NavMeshAgent",
+    "Animator"
+  ],
+  "action_types": [
+    "switch to chase mode",
+    "play running animation",
+    "set agent speed to patrol speed",
+    "move to next patrol point",
+    "pursue player directly",
+    "play walking animation",
+    "set agent speed to chase speed"
+  ],
+  "actions_per_behavior": [
+    3,
+    4
+  ]
+}

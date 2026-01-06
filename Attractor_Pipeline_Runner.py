@@ -33,9 +33,30 @@ UNITY_BEHAVIOR_COUNT = 100  # Number of behavior prompts to test
 USE_CODE_LEAK_DETECTION = True
 
 # ============================================================================
+# BASELINE GENERATION SETTINGS
+# ============================================================================
+
+# Reference model for baselines
+REFERENCE_MODEL = "claude-3-5-haiku-20241022"
+
+# Enable baseline generation during pipeline
+GENERATE_BASELINES = True
+BASELINE_CACHE_DIR = "baseline_cache"
+
+# Baseline tolerance bands
+BASELINE_TOLERANCE = {
+    "fields": 0.5,      # ±50%
+    "behaviors": 0.5,
+    "states": 0.5,
+}
+
+# Structural clustering
+N_STRUCTURAL_CLUSTERS = 5
+
+# ============================================================================
 # API KEYS - SET YOUR KEY HERE
 # ============================================================================
-ANTHROPIC_API_KEY = ""  # "sk-ant-..." 
+ANTHROPIC_API_KEY = "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"  # "sk-ant-..." 
 
 # ============================================================================
 # MODEL CONFIGURATION
@@ -50,7 +71,7 @@ LOCAL_SYNTHESIS_MODEL = "local-model"  # Your synthesis model name
 
 # Local LLM for EMBEDDINGS (to measure where outputs cluster)
 LOCAL_EMBEDDING_URL = "http://localhost:1234/v1/embeddings"
-LOCAL_EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v2-moe"  # Your embedding model name
+LOCAL_EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"  # Your embedding model name
 
 # ============================================================================
 # EXPERIMENT PARAMETERS
@@ -180,6 +201,14 @@ def inject_config_to_mapper():
     attractor_mapper.CONTROVERSIAL_PROBE_RATIO = CONTROVERSIAL_PROBE_RATIO
     attractor_mapper.PROBE_MODE = PROBE_MODE
     attractor_mapper.USE_CODE_LEAK_DETECTION = USE_CODE_LEAK_DETECTION
+    
+    # Baseline settings
+    attractor_mapper.ANTHROPIC_API_KEY = ANTHROPIC_API_KEY
+    attractor_mapper.REFERENCE_MODEL = REFERENCE_MODEL
+    attractor_mapper.GENERATE_BASELINES = GENERATE_BASELINES
+    attractor_mapper.BASELINE_CACHE_DIR = BASELINE_CACHE_DIR
+    attractor_mapper.N_STRUCTURAL_CLUSTERS = N_STRUCTURAL_CLUSTERS
+    
     if PROBE_MODE == "unity_ir":
         attractor_mapper.N_PROBES = UNITY_BEHAVIOR_COUNT
         attractor_mapper.RESULTS_DIR = "unity_ir_mapping_results"
@@ -371,8 +400,9 @@ def generate_missing_probes(existing_info: dict, target_n_probes: int, controver
                 final_embeddings.append(emb)
             final_texts.append(probe['trajectory'][-1] if probe.get('trajectory') else "")
     
-    # Save merged results
-    results_file = f"{RESULTS_DIR}/full_results_{TIMESTAMP}.json"
+    # Save merged results (use correct dir for Unity IR mode)
+    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    results_file = f"{actual_results_dir}/full_results_{TIMESTAMP}.json"
     
     # Convert numpy arrays for JSON
     save_probes = []
@@ -400,7 +430,7 @@ def generate_missing_probes(existing_info: dict, target_n_probes: int, controver
         "probes": save_probes
     }
     
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(actual_results_dir, exist_ok=True)
     with open(results_file, 'w') as f:
         json.dump(save_data, f, indent=2, default=str)
     
@@ -425,9 +455,13 @@ def step_1_mapper():
     print("STEP 1: ATTRACTOR MAPPING")
     print("="*80)
     
+    # Use correct results directory for Unity IR mode
+    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    
     # Check for existing data with missing probe types
-    if USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
-        existing_info = check_existing_probes_for_missing_types(RESULTS_DIR)
+    # Skip this for Unity IR mode - controversial probes don't apply there
+    if PROBE_MODE != "unity_ir" and USE_CONTROVERSIAL_PROBES and CONTROVERSIAL_PROBE_RATIO > 0:
+        existing_info = check_existing_probes_for_missing_types(actual_results_dir)
         
         if existing_info['latest_file'] and existing_info['probes']:
             # We have existing data - check if we need to generate missing types
@@ -452,8 +486,9 @@ def step_1_mapper():
     
     attractor_mapper.run_experiment()
     
-    # Return the path to the results file
-    results_file = f"{RESULTS_DIR}/full_results_{TIMESTAMP}.json"
+    # Return the path to the results file (use correct dir for Unity IR mode)
+    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    results_file = f"{actual_results_dir}/full_results_{TIMESTAMP}.json"
     return results_file
 
 
@@ -724,10 +759,16 @@ def step_4_steering_test(config_path: Path):
     inject_config_to_steering()
     import attractor_steering
     
+    # Determine model name and config dir from the config path
+    # config_path is like: unity_ir_filter_configs/local-model-unity-ir/filter_config.json
+    # or: filter_configs/local-model/filter_config.json
+    config_dir = str(config_path.parent.parent)
+    model_name = config_path.parent.name
+    
     # Load steering
-    print(f"\nLoading steering config for: {MODEL_NAME}")
+    print(f"\nLoading steering config for: {model_name}")
     try:
-        steering = attractor_steering.load_steering(MODEL_NAME, FILTER_CONFIG_DIR)
+        steering = attractor_steering.load_steering(model_name, config_dir)
     except FileNotFoundError as e:
         print(f"\nError: {e}")
         return
@@ -754,6 +795,9 @@ def step_4_steering_test(config_path: Path):
 def run_pipeline():
     """Run the full pipeline"""
     
+    # Determine display model name (for Unity IR, append suffix)
+    display_model_name = f"{MODEL_NAME}-unity-ir" if PROBE_MODE == "unity_ir" else MODEL_NAME
+    
     print("="*80)
     print("ATTRACTOR MAPPING PIPELINE")
     print("="*80)
@@ -762,7 +806,7 @@ def run_pipeline():
     if PROBE_MODE == "unity_ir":
         print(f"  Unity IR Code Leak Detection: {'✓ Enabled' if USE_CODE_LEAK_DETECTION else '✗ Disabled'}")
         print(f"  Behavior Prompts: {UNITY_BEHAVIOR_COUNT}")
-    print(f"  Model Name: {MODEL_NAME}")
+    print(f"  Model Name: {display_model_name}")
     print(f"  Synthesis URL: {LOCAL_SYNTHESIS_URL}")
     print(f"  Synthesis Model: {LOCAL_SYNTHESIS_MODEL}")
     print(f"  Embedding URL: {LOCAL_EMBEDDING_URL}")
@@ -798,8 +842,9 @@ def run_pipeline():
     if RUN_MAPPER:
         results_file = step_1_mapper()
     else:
-        # Look for most recent results file
-        results_dir = Path(RESULTS_DIR)
+        # Look for most recent results file (use correct dir for Unity IR mode)
+        actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+        results_dir = Path(actual_results_dir)
         if results_dir.exists():
             result_files = sorted(results_dir.glob("full_results_*.json"), reverse=True)
             if result_files:
@@ -825,11 +870,6 @@ def run_pipeline():
     if RUN_STEERING_TEST and config_path:
         step_4_steering_test(config_path)
     
-    # Update model name for Unity IR mode in final output
-    if PROBE_MODE == "unity_ir":
-        MODEL_NAME = f"{MODEL_NAME}-unity-ir"
-        FILTER_CONFIG_DIR = "unity_ir_filter_configs"
-    
     # Summary
     print("\n" + "="*80)
     print("PIPELINE COMPLETE")
@@ -840,11 +880,14 @@ def run_pipeline():
     if config_path:
         print(f"Filter Config: {config_path}")
     
+    # Determine results directory for display
+    results_display_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    
     print(f"\nNext steps:")
-    print(f"  1. Review the analysis images in {RESULTS_DIR}/")
+    print(f"  1. Review the analysis images in {results_display_dir}/")
     print(f"  2. Import attractor_steering for runtime use:")
     print(f"     from attractor_steering import load_steering, steer_generation")
-    print(f"     steering = load_steering('{MODEL_NAME}')")
+    print(f"     steering = load_steering('{display_model_name}')")
 
 
 # ============================================================================

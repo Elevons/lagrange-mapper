@@ -1,0 +1,28 @@
+{
+  "prompt": "health bar that fills over time",
+  "prompt_hash": "62a79c0b5713",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "fillSpeed",
+    "maxHealth",
+    "currentHealth"
+  ],
+  "component_names": [
+    "UI Image",
+    "Animator"
+  ],
+  "action_types": [
+    "stop health increase",
+    "change bar color",
+    "increase health gradually",
+    "update health bar visual"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

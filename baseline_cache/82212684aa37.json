@@ -1,0 +1,27 @@
+{
+  "prompt": "rigidbody that responds to gravity",
+  "prompt_hash": "82212684aa37",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "gravityMultiplier",
+    "fallingThreshold",
+    "isFalling"
+  ],
+  "component_names": [
+    "Rigidbody",
+    "Collider"
+  ],
+  "action_types": [
+    "set_value",
+    "apply_force",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

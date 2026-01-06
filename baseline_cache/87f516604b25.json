@@ -1,0 +1,31 @@
+{
+  "prompt": "background music player",
+  "prompt_hash": "87f516604b25",
+  "n_fields": 4,
+  "n_behaviors": 4,
+  "n_components": 1,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "musicTracks",
+    "currentTrackIndex",
+    "shuffleMode",
+    "volume"
+  ],
+  "component_names": [
+    "AudioSource"
+  ],
+  "action_types": [
+    "play",
+    "resume music",
+    "set volume",
+    "play next track",
+    "pause music"
+  ],
+  "actions_per_behavior": [
+    2,
+    1,
+    1,
+    1
+  ]
+}

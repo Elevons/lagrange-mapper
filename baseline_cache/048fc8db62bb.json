@@ -1,0 +1,27 @@
+{
+  "prompt": "NPC idle to talking transition",
+  "prompt_hash": "048fc8db62bb",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 2,
+  "field_names": [
+    "talkDistance",
+    "playerCharacter",
+    "isTalking"
+  ],
+  "component_names": [
+    "Animator",
+    "Collider"
+  ],
+  "action_types": [
+    "set_flag",
+    "start_dialogue",
+    "change_animation_state"
+  ],
+  "actions_per_behavior": [
+    3,
+    2
+  ]
+}

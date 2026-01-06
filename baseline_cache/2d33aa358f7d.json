@@ -1,0 +1,35 @@
+{
+  "prompt": "boss with multiple attack phases",
+  "prompt_hash": "2d33aa358f7d",
+  "n_fields": 3,
+  "n_behaviors": 4,
+  "n_components": 3,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "maxHealth",
+    "currentPhase",
+    "phaseChangeHealthThresholds"
+  ],
+  "component_names": [
+    "Health",
+    "Animator",
+    "AudioSource"
+  ],
+  "action_types": [
+    "activate_invulnerability_periods",
+    "move_pattern",
+    "increment",
+    "play_animation",
+    "summon_minions",
+    "rapid_projectile_barrage",
+    "spawn_projectiles",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    3,
+    2,
+    2,
+    2
+  ]
+}

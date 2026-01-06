@@ -1,0 +1,25 @@
+{
+  "prompt": "smooth interpolation between positions",
+  "prompt_hash": "95b187a158b5",
+  "n_fields": 4,
+  "n_behaviors": 1,
+  "n_components": 1,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "startPosition",
+    "targetPosition",
+    "interpolationSpeed",
+    "interpolationDistance"
+  ],
+  "component_names": [
+    "Transform"
+  ],
+  "action_types": [
+    "move",
+    "stop"
+  ],
+  "actions_per_behavior": [
+    2
+  ]
+}

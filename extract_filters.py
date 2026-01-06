@@ -78,6 +78,84 @@ def make_attractor_name(rank: int) -> str:
 # CODE LEAK CENTROID LOADING
 # ============================================================================
 
+def find_structural_patterns_file(results_dir: str = "lagrange_mapping_results") -> Optional[Path]:
+    """
+    Find the most recent structural_patterns_*.json file.
+    
+    Returns:
+        Path to the file, or None if not found
+    """
+    results_path = Path(results_dir)
+    if not results_path.exists():
+        return None
+    
+    pattern_files = sorted(
+        results_path.glob("structural_patterns_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+    
+    return pattern_files[0] if pattern_files else None
+
+
+def load_structural_patterns(patterns_path: Path) -> Optional[Dict]:
+    """
+    Load structural patterns from JSON file.
+    
+    Returns:
+        Dictionary of structural patterns, or None if failed
+    """
+    try:
+        with open(patterns_path, 'r') as f:
+            patterns = json.load(f)
+        return patterns
+    except Exception as e:
+        print(f"  ✗ Failed to load structural patterns: {e}")
+        return None
+
+
+def create_structural_attractor(pattern_name: str, pattern_data: Dict) -> Dict:
+    """
+    Create a structural attractor entry for the filter config.
+    
+    Structural attractors are identified by JSON shape/complexity,
+    not by embedding similarity.
+    """
+    indicators = pattern_data.get("indicators", [])
+    pattern_type = pattern_data.get("pattern_type", "unknown")
+    
+    # Convert indicators to keywords for pattern matching
+    keywords = indicators.copy()
+    
+    # Add pattern-specific keywords
+    if "over_engineering" in pattern_type:
+        keywords.extend(["excess_fields", "unnecessary_complexity", "too_many_behaviors"])
+    elif "minimal_default" in pattern_type:
+        keywords.extend(["missing_fields", "too_simple", "incomplete"])
+    elif "unnecessary_state_machine" in pattern_type:
+        keywords.extend(["state_machine", "unnecessary_state", "over_complex"])
+    elif pattern_type.startswith("always_"):
+        component = pattern_type.replace("always_", "")
+        keywords.extend([f"always_{component}", component, "component_bias"])
+    
+    # Get sample prompts for context
+    sample_prompts = pattern_data.get("sample_prompts", [])
+    
+    return {
+        "rank": 0,  # Structural patterns get high priority (same as code leak)
+        "name": f"structural_{pattern_name}",
+        "type": "structural_pattern",  # Special marker
+        "pattern_type": pattern_type,
+        "percentage": pattern_data.get("percentage", 0),
+        "indicators": indicators,
+        "keywords": keywords[:25],
+        "sample_prompts": sample_prompts[:5],
+        "sample_jsons": pattern_data.get("sample_jsons", [])[:3],
+        "avg_features": pattern_data.get("avg_features", {}),
+        "description": f"Structural pattern: {pattern_type} - detected via JSON shape analysis"
+    }
+
+
 def find_code_leak_files(results_dir: str = "lagrange_mapping_results") -> Tuple[Optional[Path], Optional[Path]]:
     """
     Find the most recent code leak centroid and responses files.
@@ -278,7 +356,10 @@ def generate_filter_config(
     attractors: Dict, 
     model_name: str,
     hedge_attractor: Optional[Dict] = None,
-    code_leak_attractor: Optional[Dict] = None
+    code_leak_attractor: Optional[Dict] = None,
+    structural_attractors: Optional[List[Dict]] = None,
+    baseline_cache_dir: Optional[str] = None,
+    baseline_tolerance: Optional[Dict] = None
 ) -> Dict:
     """
     Generate filter configuration for steering system.
@@ -310,11 +391,22 @@ def generate_filter_config(
             "embedding_threshold": 0.75,
             "hedge_embedding_threshold": 0.70,  # Slightly lower for hedge detection
             "code_leak_embedding_threshold": 0.70,  # For code leak detection
+            "structural_match_threshold": 0.7,  # For structural cliché matching
             "default_intensity": 0.5  # Filter top 50% by default
+        },
+        "baselines": {
+            "enabled": baseline_cache_dir is not None,
+            "cache_dir": baseline_cache_dir or "baseline_cache",
+            "tolerance": baseline_tolerance or {
+                "fields": 0.5,
+                "behaviors": 0.5,
+                "states": 0.5,
+            }
         },
         "all_keywords": [],  # All attractor keywords (for topic exemption at runtime)
         "has_hedge_attractor": hedge_attractor is not None,
-        "has_code_leak_attractor": code_leak_attractor is not None
+        "has_code_leak_attractor": code_leak_attractor is not None,
+        "has_structural_attractors": structural_attractors is not None and len(structural_attractors) > 0
     }
     
     # Collect all keywords
@@ -329,13 +421,38 @@ def generate_filter_config(
     else:
         start_rank = 0
     
+    # Add structural attractors if available (high priority, after code leak)
+    if structural_attractors:
+        # Sort by prevalence (most common first)
+        structural_attractors_sorted = sorted(
+            structural_attractors,
+            key=lambda x: x.get('prevalence', 0),
+            reverse=True
+        )
+        for struct_attr in structural_attractors_sorted:
+            # Only include high-prevalence patterns as attractors (>25% of outputs)
+            if struct_attr.get("prevalence", 0) > 0.25:
+                struct_attr['rank'] = start_rank  # Assign rank
+                config['attractors'].append(struct_attr)
+                # Extract keywords from pattern indicators
+                pattern = struct_attr.get('pattern', {})
+                keywords = []
+                if pattern.get('common_components'):
+                    keywords.extend([f"always_{c}" for c in pattern['common_components']])
+                if pattern.get('common_field_names'):
+                    keywords.extend(pattern['common_field_names'])
+                struct_attr['keywords'] = keywords
+                all_keywords.extend(keywords)
+                config['total_attractors'] += 1
+                start_rank += 1
+    
     # Add hedge attractor if available (for controversial mode)
     if hedge_attractor:
+        hedge_attractor['rank'] = start_rank
         config['attractors'].append(hedge_attractor)
         all_keywords.extend(hedge_attractor.get('keywords', []))
         config['total_attractors'] += 1
-        if start_rank == 0:
-            start_rank = 1  # Other attractors start at rank 1
+        start_rank += 1
     
     for i, (raw_name, data) in enumerate(sorted_attractors):
         rank = start_rank + i
@@ -603,11 +720,74 @@ def main():
         print(f"Hedge: Will include empirical hedge centroid")
     
     # Load or analyze data
+    structural_attractors = None
+    baseline_cache_dir = None
+    
     if direct_mode:
         probe_type_filter = "controversial" if controversial_only else None
         attractors = analyze_probes_directly(input_file, probe_type_filter=probe_type_filter)
     else:
-        attractors = load_attractor_data(input_file)
+        # Try to load from results file (may contain structural_analysis)
+        data = load_attractor_data(input_file)
+        if isinstance(data, dict) and "structural_analysis" in data:
+            # This is a full results file
+            structural_analysis = data.get("structural_analysis", {})
+            if structural_analysis:
+                structural_attractors = []
+                for pattern_name, pattern_data in structural_analysis.items():
+                    # Convert to attractor format
+                    structural_attractors.append({
+                        "name": pattern_data.get("pattern_type", pattern_name),
+                        "type": "structural_cliche",
+                        "pattern": {
+                            "field_count_range": [pattern_data.get("avg_features", {}).get("n_fields", 0) - 1,
+                                                  pattern_data.get("avg_features", {}).get("n_fields", 0) + 1],
+                            "field_count_avg": pattern_data.get("avg_features", {}).get("n_fields", 0),
+                            "behavior_count_range": [pattern_data.get("avg_features", {}).get("n_behaviors", 0) - 1,
+                                                     pattern_data.get("avg_features", {}).get("n_behaviors", 0) + 1],
+                            "behavior_count_avg": pattern_data.get("avg_features", {}).get("n_behaviors", 0),
+                            "common_components": pattern_data.get("common_components", []),
+                            "common_field_names": [],
+                        },
+                        "prevalence": pattern_data.get("percentage", 0) / 100.0,
+                        "sample_count": pattern_data.get("size", 0),
+                        "sample_prompts": pattern_data.get("sample_prompts", [])
+                    })
+                print(f"  ✓ Extracted {len(structural_attractors)} structural patterns from results")
+            
+            baseline_cache_dir = data.get("baseline_cache_dir")
+            # Extract regular attractors from clusters
+            if "clusters" in data:
+                attractors = data["clusters"]
+            else:
+                attractors = data
+        else:
+            attractors = data
+    
+    # Also try to load from separate patterns file (fallback)
+    if not structural_attractors:
+        print(f"\n{'─'*70}")
+        print("STRUCTURAL PATTERN DETECTION")
+        print(f"{'─'*70}")
+        
+        patterns_path = find_structural_patterns_file(hedge_dir)
+        
+        if patterns_path:
+            patterns = load_structural_patterns(patterns_path)
+            
+            if patterns:
+                structural_attractors = []
+                for pattern_name, pattern_data in patterns.items():
+                    struct_attr = create_structural_attractor(pattern_name, pattern_data)
+                    structural_attractors.append(struct_attr)
+                
+                print(f"  ✓ Loaded {len(structural_attractors)} structural patterns")
+                for struct_attr in structural_attractors:
+                    print(f"    - {struct_attr['pattern_type']}: {struct_attr['percentage']:.1f}% of probes")
+            else:
+                print(f"  ✗ Failed to load structural patterns")
+        else:
+            print(f"  No structural patterns found (Unity IR mode may not have been run)")
     
     # Look for code leak centroid (for Unity IR mode)
     code_leak_attractor = None
@@ -673,7 +853,14 @@ def main():
     print(f"\n{'─'*70}")
     print("GENERATING FILTER CONFIG")
     print(f"{'─'*70}")
-    config = generate_filter_config(attractors, model_name, hedge_attractor, code_leak_attractor)
+    config = generate_filter_config(
+        attractors, 
+        model_name, 
+        hedge_attractor, 
+        code_leak_attractor, 
+        structural_attractors,
+        baseline_cache_dir=baseline_cache_dir
+    )
     
     # Summary
     print(f"\nFound {len(config['attractors'])} attractors (ranked by priority):")
@@ -682,6 +869,10 @@ def main():
         if attractor_type == 'code_leak_centroid':
             print(f"  #{attractor['rank']}: {attractor['name']} [CODE LEAK CENTROID]")
             print(f"       Keywords: {', '.join(attractor['keywords'][:5])}...")
+        elif attractor_type == 'structural_pattern':
+            pattern_type = attractor.get('pattern_type', 'unknown')
+            print(f"  #{attractor['rank']}: {attractor['name']} [STRUCTURAL: {pattern_type}]")
+            print(f"       Indicators: {', '.join(attractor.get('indicators', [])[:3])}...")
         elif attractor_type == 'hedge_centroid':
             print(f"  #{attractor['rank']}: {attractor['name']} [HEDGE CENTROID]")
             print(f"       Keywords: {', '.join(attractor['keywords'][:5])}...")
@@ -712,6 +903,12 @@ def main():
     print("EXTRACTION COMPLETE")
     print(f"{'='*70}")
     print(f"\nFilter config saved to: {config_path.parent}/")
+    
+    if structural_attractors:
+        print(f"\n✓ Includes {len(structural_attractors)} structural pattern attractors")
+        print(f"  Structural patterns detect JSON shape/complexity issues:")
+        for struct_attr in structural_attractors:
+            print(f"    - {struct_attr['pattern_type']}: {struct_attr['percentage']:.1f}% of probes")
     
     if code_leak_attractor:
         print(f"\n✓ Includes code leak centroid for Unity IR code leak detection")

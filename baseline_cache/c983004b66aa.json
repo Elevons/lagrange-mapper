@@ -1,0 +1,28 @@
+{
+  "prompt": "enemy only attacks if player is visible",
+  "prompt_hash": "c983004b66aa",
+  "n_fields": 2,
+  "n_behaviors": 2,
+  "n_components": 3,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "attackRange",
+    "attackCooldown"
+  ],
+  "component_names": [
+    "Enemy",
+    "Vision",
+    "Combat"
+  ],
+  "action_types": [
+    "reset attack cooldown",
+    "start attack cooldown timer",
+    "stop attack",
+    "start attack"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

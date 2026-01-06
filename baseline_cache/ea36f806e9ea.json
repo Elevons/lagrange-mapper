@@ -1,0 +1,26 @@
+{
+  "prompt": "button that opens a door",
+  "prompt_hash": "ea36f806e9ea",
+  "n_fields": 3,
+  "n_behaviors": 1,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "targetDoor",
+    "openDistance",
+    "buttonPressSound"
+  ],
+  "component_names": [
+    "Button",
+    "AudioSource"
+  ],
+  "action_types": [
+    "move",
+    "play_sound",
+    "disable"
+  ],
+  "actions_per_behavior": [
+    3
+  ]
+}

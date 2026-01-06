@@ -1,0 +1,25 @@
+{
+  "prompt": "collider that detects overlaps",
+  "prompt_hash": "18cace17fe0f",
+  "n_fields": 2,
+  "n_behaviors": 2,
+  "n_components": 1,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "detectedObjects",
+    "maxOverlapCount"
+  ],
+  "component_names": [
+    "Collider"
+  ],
+  "action_types": [
+    "log",
+    "add",
+    "remove"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

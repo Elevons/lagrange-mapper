@@ -62,12 +62,21 @@ class SteeringConfig:
     embedding_threshold: float = 0.75
     hedge_embedding_threshold: float = 0.70  # Lower threshold for hedge detection
     code_leak_embedding_threshold: float = 0.70  # For code leak detection
+    structural_match_threshold: float = 0.7  # For structural cliché matching
     default_intensity: float = 0.5
     max_regeneration_attempts: int = 3
     embedding_url: str = DEFAULT_EMBEDDING_URL
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     # All attractor keywords (for topic-based exemption)
     all_keywords: List[str] = field(default_factory=list)
+    # Baseline settings
+    baselines_enabled: bool = False
+    baseline_cache_dir: str = "baseline_cache"
+    baseline_tolerance: Dict = field(default_factory=lambda: {
+        "fields": 0.5,
+        "behaviors": 0.5,
+        "states": 0.5,
+    })
     
     @classmethod
     def load(cls, config_path: str) -> 'SteeringConfig':
@@ -86,6 +95,8 @@ class SteeringConfig:
                 for i, (name, attractor_data) in enumerate(attractors.items())
             ]
         
+        baselines = data.get('baselines', {})
+        
         return cls(
             model_name=data.get('model_name', 'unknown'),
             attractors=attractors,
@@ -94,44 +105,81 @@ class SteeringConfig:
             embedding_threshold=settings.get('embedding_threshold', 0.75),
             hedge_embedding_threshold=settings.get('hedge_embedding_threshold', 0.70),
             code_leak_embedding_threshold=settings.get('code_leak_embedding_threshold', 0.70),
+            structural_match_threshold=settings.get('structural_match_threshold', 0.7),
             default_intensity=settings.get('default_intensity', 0.5),
             max_regeneration_attempts=settings.get('max_regeneration_attempts', 3),
             # All attractor keywords (for topic-based exemption)
-            all_keywords=data.get('all_keywords', [])
+            all_keywords=data.get('all_keywords', []),
+            baselines_enabled=baselines.get('enabled', False),
+            baseline_cache_dir=baselines.get('cache_dir', 'baseline_cache'),
+            baseline_tolerance=baselines.get('tolerance', {"fields": 0.5, "behaviors": 0.5, "states": 0.5})
         )
 
 
 @dataclass
 class DetectionResult:
-    """Result of attractor detection"""
+    """Result of unified attractor detection"""
     is_attracted: bool = False
     intensity_used: float = 0.5
     attractors_checked: int = 0
+    
+    # Code leak detection
     keyword_score: float = 0.0
     embedding_score: float = 0.0
-    triggered_attractors: List[str] = field(default_factory=list)
     flagged_keywords: List[str] = field(default_factory=list)
+    
+    # Structural cliché detection
+    structural_cliches_matched: List[str] = field(default_factory=list)
+    
+    # Baseline deviation detection
+    baseline_found: bool = False
+    over_engineering_score: float = 0.0
+    under_engineering_score: float = 0.0
+    baseline_violations: List[str] = field(default_factory=list)
+    
+    # Combined
+    triggered_attractors: List[str] = field(default_factory=list)
     nearest_attractor: Optional[str] = None
+    
+    def merge(self, other: 'DetectionResult'):
+        """Merge another detection result into this one"""
+        if other.is_attracted:
+            self.is_attracted = True
+        self.keyword_score = max(self.keyword_score, other.keyword_score)
+        self.embedding_score = max(self.embedding_score, other.embedding_score)
+        self.flagged_keywords.extend(other.flagged_keywords)
+        self.structural_cliches_matched.extend(other.structural_cliches_matched)
+        self.baseline_violations.extend(other.baseline_violations)
+        self.over_engineering_score = max(self.over_engineering_score, other.over_engineering_score)
+        self.under_engineering_score = max(self.under_engineering_score, other.under_engineering_score)
+        self.triggered_attractors.extend(other.triggered_attractors)
+        if other.baseline_found:
+            self.baseline_found = True
     
     def summary(self) -> str:
         """Human-readable summary"""
         if not self.is_attracted:
-            return f"✓ No attractor match (intensity={self.intensity_used:.1f}, checked {self.attractors_checked} attractors)"
-
-        parts = [f"⚠️ Attractor match detected (intensity={self.intensity_used:.1f})"]
-        parts.append(f"  Checked {self.attractors_checked} attractors")
-        parts.append(f"  Keyword score: {self.keyword_score:.1f}")
+            return f"✓ No attractor match (checked {self.attractors_checked})"
+        
+        parts = [f"⚠️ Attractor match (intensity={self.intensity_used:.1f})"]
         
         if self.triggered_attractors:
             parts.append(f"  Triggered: {', '.join(self.triggered_attractors)}")
         
         if self.flagged_keywords:
-            parts.append(f"  Flagged keywords: {', '.join(self.flagged_keywords[:8])}")
+            parts.append(f"  Code leaks: {', '.join(self.flagged_keywords[:5])}")
         
-        if self.embedding_score > 0:
-            parts.append(f"  Embedding similarity: {self.embedding_score:.3f}")
-            if self.nearest_attractor:
-                parts.append(f"  Nearest attractor: {self.nearest_attractor}")
+        if self.structural_cliches_matched:
+            parts.append(f"  Structural clichés: {', '.join(self.structural_cliches_matched)}")
+        
+        if self.baseline_violations:
+            parts.append(f"  Baseline violations: {', '.join(self.baseline_violations)}")
+        
+        if self.over_engineering_score > 0.2:
+            parts.append(f"  Over-engineering: {self.over_engineering_score:.2f}")
+        
+        if self.under_engineering_score > 0.2:
+            parts.append(f"  Under-engineering: {self.under_engineering_score:.2f}")
         
         return "\n".join(parts)
     
@@ -154,11 +202,12 @@ class DetectionResult:
 # ============================================================================
 
 class AttractorSteering:
-    """Main steering system with intensity-based filtering"""
+    """Main steering system with unified attractor detection"""
     
     def __init__(self, config: SteeringConfig):
         self.config = config
         self.centroids = self._load_centroids()
+        self.baseline_cache = self._load_baseline_cache()
         self._embedding_cache = {}
     
     def _load_centroids(self) -> Dict[str, np.ndarray]:
@@ -172,6 +221,28 @@ class AttractorSteering:
                     vec = vec / norm
                 centroids[attractor['name']] = vec
         return centroids
+    
+    def _load_baseline_cache(self) -> Dict[str, Dict]:
+        """Load pre-generated baselines from cache"""
+        cache = {}
+        
+        if not self.config.baselines_enabled:
+            return cache
+        
+        from pathlib import Path
+        cache_dir = Path(self.config.baseline_cache_dir)
+        if not cache_dir.exists():
+            return cache
+        
+        for file in cache_dir.glob("*.json"):
+            try:
+                with open(file) as f:
+                    data = json.load(f)
+                    cache[data["prompt_hash"]] = data
+            except:
+                continue
+        
+        return cache
     
     def _get_active_attractors(self, intensity: float) -> List[Dict]:
         """Get attractors to check based on intensity (0-1)"""
@@ -477,6 +548,264 @@ class AttractorSteering:
                 result.triggered_attractors.append("code_leak_patterns")
         
         result.attractors_checked = len(code_leak_attractors) if code_leak_attractors else 0
+        
+        return result
+    
+    def detect_unified(
+        self,
+        text: str,
+        parsed_json: Dict = None,
+        prompt: str = None,
+        intensity: float = None,
+        use_embeddings: bool = True
+    ) -> DetectionResult:
+        """
+        Unified attractor detection:
+        1. Code leak (pattern + embedding)
+        2. Structural clichés
+        3. Baseline deviation (over/under-engineering)
+        
+        Args:
+            text: Raw JSON string for code leak detection
+            parsed_json: Parsed JSON dict for structural detection
+            prompt: Original prompt for baseline comparison
+            intensity: Detection intensity 0-1 (higher = more sensitive)
+            use_embeddings: Whether to use embedding-based detection
+        
+        Returns:
+            DetectionResult with all detection layers
+        """
+        if intensity is None:
+            intensity = self.config.default_intensity
+        
+        result = DetectionResult()
+        result.intensity_used = intensity
+        
+        # Get active attractors based on intensity
+        active_attractors = self._get_active_attractors(intensity)
+        result.attractors_checked = len(active_attractors)
+        
+        # --- Layer 1: Code leak detection ---
+        code_result = self._detect_code_leaks(text, active_attractors, use_embeddings)
+        result.merge(code_result)
+        
+        # --- Layer 2: Structural cliché detection ---
+        if parsed_json:
+            cliche_result = self._detect_structural_cliches(parsed_json, active_attractors)
+            result.merge(cliche_result)
+        
+        # --- Layer 3: Baseline deviation detection ---
+        if parsed_json and prompt and self.config.baselines_enabled:
+            baseline_result = self._detect_baseline_deviation(parsed_json, prompt)
+            result.merge(baseline_result)
+        
+        return result
+    
+    def _detect_code_leaks(
+        self,
+        text: str,
+        active_attractors: List[Dict],
+        use_embeddings: bool
+    ) -> DetectionResult:
+        """Layer 1: Code leak detection via patterns and embeddings"""
+        result = DetectionResult()
+        
+        # Pattern-based detection (import from attractor_mapper)
+        try:
+            from attractor_mapper import detect_code_markers
+            markers = detect_code_markers(text)
+            result.keyword_score = len(markers)
+            result.flagged_keywords = [m["pattern"] for m in markers]
+            
+            if result.keyword_score >= self.config.keyword_threshold:
+                result.is_attracted = True
+                result.triggered_attractors.append("code_leak_patterns")
+        except ImportError:
+            pass
+        
+        # Embedding-based detection
+        if use_embeddings and "code_leak" in self.centroids:
+            embedding = self.get_embedding(text)
+            if embedding is not None:
+                similarity = np.dot(embedding, self.centroids["code_leak"])
+                result.embedding_score = similarity
+                
+                if similarity > self.config.code_leak_embedding_threshold:
+                    result.is_attracted = True
+                    result.triggered_attractors.append("code_leak_embedding")
+                    result.nearest_attractor = "code_leak"
+        
+        return result
+    
+    def _detect_structural_cliches(
+        self,
+        parsed_json: Dict,
+        active_attractors: List[Dict]
+    ) -> DetectionResult:
+        """Layer 2: Structural cliché detection"""
+        result = DetectionResult()
+        
+        # Extract structure from target
+        n_fields = len(parsed_json.get("fields", []))
+        n_behaviors = len(parsed_json.get("behaviors", []))
+        components = set(parsed_json.get("components", []))
+        field_names = {f.get("name", "").lower() for f in parsed_json.get("fields", []) if isinstance(f, dict)}
+        state = parsed_json.get("state", {})
+        has_sm = state.get("has_state_machine", False) if isinstance(state, dict) else False
+        
+        for attractor in active_attractors:
+            if attractor.get("type") != "structural_cliche":
+                continue
+            
+            pattern = attractor.get("pattern", {})
+            match_score = self._compute_pattern_match(
+                pattern, n_fields, n_behaviors, components, field_names, has_sm
+            )
+            
+            if match_score >= self.config.structural_match_threshold:
+                result.is_attracted = True
+                result.structural_cliches_matched.append(attractor["name"])
+                result.triggered_attractors.append(f"cliche:{attractor['name']}")
+        
+        return result
+    
+    def _compute_pattern_match(
+        self,
+        pattern: Dict,
+        n_fields: int,
+        n_behaviors: int,
+        components: set,
+        field_names: set,
+        has_sm: bool
+    ) -> float:
+        """Compute how well target matches a structural pattern (0-1)"""
+        
+        matches = 0
+        checks = 0
+        
+        # Field count
+        if "field_count_range" in pattern:
+            checks += 1
+            min_f, max_f = pattern["field_count_range"]
+            if min_f <= n_fields <= max_f:
+                matches += 1
+        
+        # Behavior count
+        if "behavior_count_range" in pattern:
+            checks += 1
+            min_b, max_b = pattern["behavior_count_range"]
+            if min_b <= n_behaviors <= max_b:
+                matches += 1
+        
+        # State machine
+        if "always_has_state_machine" in pattern:
+            checks += 1
+            if has_sm == pattern["always_has_state_machine"]:
+                matches += 1
+        elif "never_has_state_machine" in pattern:
+            checks += 1
+            if not has_sm:
+                matches += 1
+        
+        # Common components
+        if "common_components" in pattern:
+            required = set(pattern["common_components"])
+            checks += len(required)
+            matches += len(required & components)
+        
+        # Common field names
+        if "common_field_names" in pattern:
+            required = {f.lower() for f in pattern["common_field_names"]}
+            checks += len(required)
+            matches += len(required & field_names)
+        
+        return matches / checks if checks > 0 else 0
+    
+    def _detect_baseline_deviation(
+        self,
+        parsed_json: Dict,
+        prompt: str
+    ) -> DetectionResult:
+        """Layer 3: Detect over/under-engineering vs baseline"""
+        result = DetectionResult()
+        
+        # Find baseline
+        import hashlib
+        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:12]
+        baseline = self.baseline_cache.get(prompt_hash)
+        
+        if not baseline:
+            return result
+        
+        result.baseline_found = True
+        
+        # Extract actual values
+        actual_fields = len(parsed_json.get("fields", []))
+        actual_behaviors = len(parsed_json.get("behaviors", []))
+        state = parsed_json.get("state", {})
+        actual_has_sm = state.get("has_state_machine", False) if isinstance(state, dict) else False
+        actual_states = len(state.get("states", [])) if isinstance(state, dict) else 0
+        
+        # Expected values from baseline
+        expected_fields = baseline["n_fields"]
+        expected_behaviors = baseline["n_behaviors"]
+        expected_has_sm = baseline["has_state_machine"]
+        expected_states = baseline["n_states"]
+        
+        tolerance = self.config.baseline_tolerance
+        
+        # Check fields
+        tol_f = tolerance.get("fields", 0.5)
+        min_f = max(0, int(expected_fields * (1 - tol_f)))
+        max_f = int(expected_fields * (1 + tol_f)) + 1
+        
+        if actual_fields < min_f:
+            result.under_engineering_score += 0.3
+            result.baseline_violations.append(f"fields: {actual_fields} < {min_f} (expected ~{expected_fields})")
+        elif actual_fields > max_f:
+            result.over_engineering_score += 0.2
+            result.baseline_violations.append(f"fields: {actual_fields} > {max_f} (expected ~{expected_fields})")
+        
+        # Check behaviors
+        tol_b = tolerance.get("behaviors", 0.5)
+        min_b = max(0, int(expected_behaviors * (1 - tol_b)))
+        max_b = int(expected_behaviors * (1 + tol_b)) + 1
+        
+        if actual_behaviors < min_b:
+            result.under_engineering_score += 0.4
+            result.baseline_violations.append(f"behaviors: {actual_behaviors} < {min_b} (expected ~{expected_behaviors})")
+        elif actual_behaviors > max_b:
+            result.over_engineering_score += 0.25
+            result.baseline_violations.append(f"behaviors: {actual_behaviors} > {max_b} (expected ~{expected_behaviors})")
+        
+        # Check state machine
+        if expected_has_sm and not actual_has_sm:
+            result.under_engineering_score += 0.5
+            result.baseline_violations.append("missing state machine (baseline has one)")
+        elif not expected_has_sm and actual_has_sm:
+            result.over_engineering_score += 0.4
+            result.baseline_violations.append("unnecessary state machine (baseline has none)")
+        
+        # Check state count
+        if expected_has_sm and actual_has_sm:
+            tol_s = tolerance.get("states", 0.5)
+            min_s = max(0, int(expected_states * (1 - tol_s)))
+            max_s = int(expected_states * (1 + tol_s)) + 1
+            
+            if actual_states < min_s:
+                result.under_engineering_score += 0.2
+                result.baseline_violations.append(f"states: {actual_states} < {min_s}")
+            elif actual_states > max_s:
+                result.over_engineering_score += 0.15
+                result.baseline_violations.append(f"states: {actual_states} > {max_s}")
+        
+        # Trigger if significant deviation
+        if result.over_engineering_score > 0.3 or result.under_engineering_score > 0.3:
+            result.is_attracted = True
+            if result.over_engineering_score > result.under_engineering_score:
+                result.triggered_attractors.append("over_engineering")
+            else:
+                result.triggered_attractors.append("under_engineering")
         
         return result
 

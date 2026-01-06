@@ -38,6 +38,20 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 import argparse
 
+# Try to import json_repair for robust JSON fixing (pip install json-repair)
+try:
+    from json_repair import repair_json
+    HAS_JSON_REPAIR = True
+except ImportError:
+    HAS_JSON_REPAIR = False
+    
+# Try json5 as fallback - more lenient parser (pip install json5)
+try:
+    import json5
+    HAS_JSON5 = True
+except ImportError:
+    HAS_JSON5 = False
+
 # ============================================================================
 # IMPORTS FROM MODIFIED PIPELINE
 # ============================================================================
@@ -69,7 +83,7 @@ MODEL_NAME = "local-model-unity-ir"
 DEFAULT_INTENSITY = 0.5
 MAX_REGENERATION_ATTEMPTS = 3
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS = 4096  # Increased to allow for longer responses
 
 # ============================================================================
 # SYSTEM PROMPT
@@ -136,19 +150,27 @@ class GenerationResult:
     attempts: int = 1
     original_output: Optional[str] = None
     
-    # Code leak info
-    code_leaks_found: List[Dict] = field(default_factory=list)
-    detection_result: Optional[DetectionResult] = None
+    # Detection results (initial and final)
+    initial_detection: Optional[DetectionResult] = None
+    final_detection: Optional[DetectionResult] = None
     
     # Errors
     error: Optional[str] = None
     
+    @property
+    def detection_result(self) -> Optional[DetectionResult]:
+        """Backward compatibility: returns final detection"""
+        return self.final_detection
+    
     def __str__(self) -> str:
         if not self.success:
             return f"GenerationResult(success=False, error={self.error})"
+        
         status = "steered" if self.was_steered else "clean"
-        leaks = len(self.code_leaks_found)
-        return f"GenerationResult(success=True, status={status}, attempts={self.attempts}, remaining_leaks={leaks})"
+        # Show what was initially triggered
+        initial_triggered = self.initial_detection.triggered_attractors if self.initial_detection else []
+        
+        return f"GenerationResult(success=True, status={status}, attempts={self.attempts}, triggered={initial_triggered})"
 
 # ============================================================================
 # LLM INTERFACE
@@ -183,32 +205,104 @@ def call_llm(
 
 
 def extract_json_from_response(response: str) -> Tuple[Optional[str], Optional[Dict]]:
-    """Extract and parse JSON from LLM response"""
-    # Direct parse
+    """
+    Extract and parse JSON from LLM response.
+    
+    Uses json-repair library if available, falls back to json5, then regex fixes.
+    """
+    # Find JSON content (in markdown block or raw)
+    json_str = response
+    
+    # Extract from markdown if present
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
+    if match:
+        json_str = match.group(1)
+    else:
+        # Find raw JSON object
+        match = re.search(r'\{[\s\S]*\}', response)
+        if match:
+            json_str = match.group(0)
+        else:
+            # Try incomplete JSON
+            match = re.search(r'\{[\s\S]*', response)
+            if match:
+                json_str = match.group(0)
+    
+    # Method 1: Direct parse (fastest)
     try:
-        return response, json.loads(response)
+        return json_str, json.loads(json_str)
     except json.JSONDecodeError:
         pass
     
-    # Find in markdown block
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
-    if match:
+    # Method 2: json-repair library (best quality)
+    if HAS_JSON_REPAIR:
         try:
-            json_str = match.group(1)
-            return json_str, json.loads(json_str)
-        except json.JSONDecodeError:
+            repaired = repair_json(json_str, return_objects=False)
+            return repaired, json.loads(repaired)
+        except Exception:
             pass
     
-    # Find raw JSON object
-    match = re.search(r'\{[\s\S]*\}', response)
-    if match:
+    # Method 3: json5 (handles comments, trailing commas, unquoted keys)
+    if HAS_JSON5:
         try:
-            json_str = match.group(0)
-            return json_str, json.loads(json_str)
+            parsed = json5.loads(json_str)
+            # Re-serialize to clean JSON
+            clean_json = json.dumps(parsed, indent=2)
+            return clean_json, parsed
+        except Exception:
+            pass
+    
+    # Method 4: Manual regex fixes (fallback)
+    fixed = try_fix_json(json_str)
+    if fixed:
+        try:
+            return fixed, json.loads(fixed)
         except json.JSONDecodeError:
             pass
     
     return None, None
+
+
+def try_fix_json(json_str: str) -> Optional[str]:
+    """
+    Manual JSON repair using regex.
+    
+    This is the fallback when json-repair and json5 are not available.
+    It handles common LLM JSON errors but is not comprehensive.
+    """
+    # Remove comments
+    json_str = re.sub(r'//[^\n]*', '', json_str)
+    json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
+    
+    # Fix structural issues
+    json_str = re.sub(r',\s*([\]}])', r'\1', json_str)  # trailing commas
+    json_str = re.sub(r'}\s*\n\s*{', '},\n{', json_str)  # missing commas between objects
+    json_str = re.sub(r'}\s*{', '}, {', json_str)
+    
+    # Quote unquoted values (common LLM error: putting code expressions as bare values)
+    # This is a best-effort fix - json-repair does this much better
+    json_str = re.sub(r':\s*(\([^)]+\))', r': "\1"', json_str)
+    json_str = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z0-9_.]+)(\s*[,}\]])', r': "\1"\2', json_str)
+    json_str = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_.]*\s*[\+\-\*\/]\s*[^,}\]]+?)(\s*[,}\]])', r': "\1"\2', json_str)
+    
+    # Balance braces for truncated JSON
+    open_braces = json_str.count('{') - json_str.count('}')
+    open_brackets = json_str.count('[') - json_str.count(']')
+    
+    if open_braces > 0 or open_brackets > 0:
+        # Trim trailing incomplete parts
+        json_str = re.sub(r',\s*"[^"]*"\s*:\s*$', '', json_str)
+        json_str = re.sub(r',\s*"[^"]*$', '', json_str)
+        json_str = re.sub(r':\s*"[^"]*$', ': null', json_str)
+        json_str = re.sub(r':\s*$', ': null', json_str)
+        
+        # Recount and close
+        open_braces = json_str.count('{') - json_str.count('}')
+        open_brackets = json_str.count('[') - json_str.count(']')
+        json_str += ']' * max(0, open_brackets)
+        json_str += '}' * max(0, open_braces)
+    
+    return json_str
 
 # ============================================================================
 # GENERATOR CLASS
@@ -241,7 +335,8 @@ class UnityIRGenerator:
                 self.steering = load_steering(model_name, config_dir)
                 if verbose:
                     n_attractors = len(self.steering.config.attractors)
-                    print(f"Loaded steering: {n_attractors} attractors")
+                    baselines = "enabled" if self.steering.config.baselines_enabled else "disabled"
+                    print(f"Loaded steering: {n_attractors} attractors, baselines {baselines}")
             except FileNotFoundError:
                 print(f"Warning: No steering config at {config_dir}/{model_name}/")
                 print("Run pipeline first to generate configs, or use --no-steering")
@@ -271,55 +366,80 @@ class UnityIRGenerator:
         if json_str is None:
             result.error = "Failed to extract valid JSON"
             result.original_output = response
+            if self.verbose:
+                print(f"  Raw response ({len(response)} chars): {response[:200]}...")
             return result
         
         result.original_output = json_str
         
-        # Detect code leaks using pipeline's detector
-        code_leaks = detect_code_markers(json_str)
-        result.code_leaks_found = code_leaks
-        
-        # Full detection with steering if available
-        needs_correction = len(code_leaks) > 0
-        
+        # Unified attractor detection
         if self.steering:
-            detection = self.steering.detect_code_leak(json_str, intensity=self.intensity)
-            result.detection_result = detection
-            needs_correction = detection.is_attracted
+            detection = self.steering.detect_unified(
+                text=json_str,
+                parsed_json=parsed,
+                prompt=behavior_description,
+                intensity=self.intensity,
+                use_embeddings=True
+            )
+            result.initial_detection = detection
+            result.final_detection = detection  # Will be updated if steering occurs
             
             if self.verbose:
-                print(f"  Leak score: {detection.keyword_score}, triggered: {detection.is_attracted}")
+                print(f"  Detection: {detection.summary()}")
+            
+            # Correction loop if attracted
+            if detection.is_attracted:
+                result.was_steered = True
+                corrected_json, corrected_parsed, attempts, final_detection = self._correction_loop(
+                    json_str, parsed, behavior_description, detection, max_attempts, temperature
+                )
+                json_str = corrected_json
+                parsed = corrected_parsed
+                result.attempts = attempts
+                result.final_detection = final_detection
         
-        # Return clean output
-        if not needs_correction:
-            result.success = True
-            result.json_output = json_str
-            result.parsed = parsed
-            return result
+        result.success = True
+        result.json_output = json_str
+        result.parsed = parsed
         
-        # Correction loop
-        if self.verbose:
-            print(f"  Found {len(code_leaks)} leaks, correcting...")
+        return result
+    
+    def _correction_loop(
+        self,
+        json_str: str,
+        parsed: Dict,
+        prompt: str,
+        initial_detection: DetectionResult,
+        max_attempts: int,
+        temperature: float
+    ) -> Tuple[str, Dict, int, DetectionResult]:
+        """Run correction loop until output is clean or max attempts reached
         
-        result.was_steered = True
-        corrected_json = json_str
-        current_leaks = code_leaks
+        Returns:
+            Tuple of (json_str, parsed_dict, attempts, final_detection)
+        """
+        
+        current_json = json_str
+        current_parsed = parsed
+        current_detection = initial_detection
         
         for attempt in range(max_attempts):
-            result.attempts = attempt + 2
+            # Generate correction with progressively lower temperature
+            # Start at 0.2, decrease each attempt to make LLM more conservative
+            correction_temp = max(0.05, 0.2 - (attempt * 0.05))
             
-            # Build correction prompt using pipeline's function
-            flagged = [leak["pattern"] for leak in current_leaks[:10]]
-            system_prompt, user_prompt = build_natural_language_prompt(
-                corrected_json, 
-                flagged
+            if self.verbose:
+                print(f"  Correction attempt {attempt + 1} (temp={correction_temp:.2f})...")
+            
+            # Build correction prompt based on what was triggered
+            system_prompt, user_prompt = self._build_correction_prompt(
+                current_json, current_detection
             )
             
-            # Generate correction
             corrected_response = call_llm(
                 system_prompt,
                 user_prompt,
-                temperature=max(0.3, temperature - 0.2)
+                temperature=correction_temp
             )
             
             if corrected_response is None:
@@ -330,26 +450,75 @@ class UnityIRGenerator:
             if new_json is None:
                 continue
             
-            # Check improvement
-            new_leaks = detect_code_markers(new_json)
+            # Re-detect
+            new_detection = self.steering.detect_unified(
+                text=new_json,
+                parsed_json=new_parsed,
+                prompt=prompt,
+                intensity=self.intensity,
+                use_embeddings=True
+            )
             
             if self.verbose:
-                print(f"  Attempt {attempt + 1}: {len(current_leaks)} → {len(new_leaks)} leaks")
+                print(f"    Result: {new_detection.summary()}")
             
-            if len(new_leaks) < len(current_leaks):
-                corrected_json = new_json
-                parsed = new_parsed
-                current_leaks = new_leaks
+            # Keep if improved
+            if not new_detection.is_attracted:
+                return new_json, new_parsed, attempt + 2, new_detection
             
-            if len(new_leaks) == 0:
-                break
+            # Update for next iteration if better
+            if len(new_detection.triggered_attractors) < len(current_detection.triggered_attractors):
+                current_json = new_json
+                current_parsed = new_parsed
+                current_detection = new_detection
         
-        result.success = True
-        result.json_output = corrected_json
-        result.parsed = parsed
-        result.code_leaks_found = current_leaks
+        return current_json, current_parsed, max_attempts + 1, current_detection
+    
+    def _build_correction_prompt(
+        self,
+        json_str: str,
+        detection: DetectionResult
+    ) -> Tuple[str, str]:
+        """Build correction prompt based on detection results"""
         
-        return result
+        issues = []
+        
+        # Always report flagged patterns, even if below threshold
+        if detection.flagged_keywords:
+            issues.append(f"Code syntax detected: {', '.join(detection.flagged_keywords)}")
+        
+        if detection.structural_cliches_matched:
+            issues.append(f"Structural clichés: {', '.join(detection.structural_cliches_matched)}")
+        
+        if detection.over_engineering_score > 0.3:
+            issues.append("Output is over-engineered - simplify structure")
+        
+        if detection.under_engineering_score > 0.3:
+            issues.append("Output is under-engineered - add missing detail")
+        
+        if detection.baseline_violations:
+            issues.append(f"Baseline deviations: {', '.join(detection.baseline_violations[:3])}")
+        
+        system_prompt = """You fix Unity IR JSON by converting ALL code syntax to natural language.
+
+RULES:
+- NO math operators - describe operations in words
+- NO API names (Transform, Vector3, Time.deltaTime, etc.) - describe what they represent
+- NO function calls - describe the action
+- NO type annotations (float, int) - use plain descriptions
+
+Output ONLY valid JSON with code replaced by natural descriptions."""
+        
+        user_prompt = f"""Fix this Unity IR JSON - replace ALL code with natural language:
+
+{json_str}
+
+PROBLEMS:
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+Rewrite with natural language descriptions:"""
+        
+        return system_prompt, user_prompt
     
     def generate_batch(self, descriptions: List[str], temperature: float = DEFAULT_TEMPERATURE) -> List[GenerationResult]:
         """Generate Unity IR for multiple descriptions"""
@@ -369,6 +538,15 @@ def interactive_mode(generator: UnityIRGenerator):
     print("=" * 60)
     print("UNITY IR GENERATOR - Interactive Mode")
     print("=" * 60)
+    
+    # Show JSON repair library status
+    if HAS_JSON_REPAIR:
+        print("✓ json-repair available (robust JSON fixing)")
+    elif HAS_JSON5:
+        print("✓ json5 available (lenient parsing)")
+    else:
+        print("⚠ Install json-repair for better JSON handling: pip install json-repair")
+    
     print("Enter behavior descriptions. Commands: quit, intensity <0-1>, verbose, quiet")
     print("=" * 60)
     
@@ -405,11 +583,30 @@ def interactive_mode(generator: UnityIRGenerator):
             print(f"\n{result}")
             print("-" * 40)
             print(result.json_output)
-            if result.was_steered and result.code_leaks_found:
+            if result.was_steered:
                 print("-" * 40)
-                print(f"Remaining leaks: {[l['pattern'] for l in result.code_leaks_found]}")
+                # Show initial vs final comparison
+                if result.initial_detection:
+                    print(f"Initial: {result.initial_detection.summary()}")
+                if result.final_detection:
+                    print(f"Final:   {result.final_detection.summary()}")
+                # Show what was fixed
+                if result.initial_detection and result.final_detection:
+                    initial_triggers = set(result.initial_detection.triggered_attractors)
+                    final_triggers = set(result.final_detection.triggered_attractors)
+                    fixed = initial_triggers - final_triggers
+                    if fixed:
+                        print(f"Fixed:   {', '.join(fixed)}")
+                    remaining = final_triggers
+                    if remaining:
+                        print(f"Remaining: {', '.join(remaining)}")
         else:
             print(f"\nFailed: {result.error}")
+            if result.original_output:
+                print("-" * 40)
+                print(f"Raw LLM response ({len(result.original_output)} chars):")
+                # Show full response for debugging
+                print(result.original_output)
 
 
 def batch_mode(generator: UnityIRGenerator, input_file: str, output_dir: str):
@@ -443,7 +640,7 @@ def batch_mode(generator: UnityIRGenerator, input_file: str, output_dir: str):
                 "success": r.success,
                 "steered": r.was_steered,
                 "attempts": r.attempts,
-                "remaining_leaks": len(r.code_leaks_found),
+                "triggered_attractors": r.detection_result.triggered_attractors if r.detection_result else [],
                 "error": r.error
             }
             for r in results

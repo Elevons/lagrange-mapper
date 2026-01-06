@@ -1,0 +1,26 @@
+{
+  "prompt": "platform that moves",
+  "prompt_hash": "a2c39cf55acf",
+  "n_fields": 4,
+  "n_behaviors": 1,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "movementSpeed",
+    "moveDistance",
+    "movementAxis",
+    "pauseDuration"
+  ],
+  "component_names": [
+    "Transform",
+    "Rigidbody"
+  ],
+  "action_types": [
+    "pause",
+    "move"
+  ],
+  "actions_per_behavior": [
+    2
+  ]
+}

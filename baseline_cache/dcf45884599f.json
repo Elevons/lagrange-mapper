@@ -1,0 +1,28 @@
+{
+  "prompt": "particle that emits",
+  "prompt_hash": "dcf45884599f",
+  "n_fields": 4,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "emissionRate",
+    "particleLifetime",
+    "particleSize",
+    "particleColor"
+  ],
+  "component_names": [
+    "ParticleSystem",
+    "Transform"
+  ],
+  "action_types": [
+    "stop_emission",
+    "start_emission",
+    "set_particle_properties"
+  ],
+  "actions_per_behavior": [
+    2,
+    1
+  ]
+}

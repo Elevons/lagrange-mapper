@@ -1,0 +1,24 @@
+{
+  "prompt": "traffic light cycling through colors",
+  "prompt_hash": "81439dad7d8b",
+  "n_fields": 3,
+  "n_behaviors": 1,
+  "n_components": 1,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "redDuration",
+    "yellowDuration",
+    "greenDuration"
+  ],
+  "component_names": [
+    "Renderer"
+  ],
+  "action_types": [
+    "change color",
+    "wait"
+  ],
+  "actions_per_behavior": [
+    6
+  ]
+}

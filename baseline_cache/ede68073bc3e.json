@@ -1,0 +1,27 @@
+{
+  "prompt": "empty container object",
+  "prompt_hash": "ede68073bc3e",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "isEmpty",
+    "capacity",
+    "currentItems"
+  ],
+  "component_names": [
+    "Transform",
+    "Collider"
+  ],
+  "action_types": [
+    "decrease",
+    "set",
+    "increase"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

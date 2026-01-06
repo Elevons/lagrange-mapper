@@ -1,0 +1,25 @@
+{
+  "prompt": "activate when health below threshold",
+  "prompt_hash": "14bd04856603",
+  "n_fields": 2,
+  "n_behaviors": 1,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 2,
+  "field_names": [
+    "healthThreshold",
+    "triggerObject"
+  ],
+  "component_names": [
+    "Health",
+    "GameObject"
+  ],
+  "action_types": [
+    "change_color",
+    "enable",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    3
+  ]
+}

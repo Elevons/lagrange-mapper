@@ -1,0 +1,33 @@
+{
+  "prompt": "vehicle with realistic gear shifting",
+  "prompt_hash": "24d08536e33d",
+  "n_fields": 7,
+  "n_behaviors": 2,
+  "n_components": 3,
+  "has_state_machine": true,
+  "n_states": 2,
+  "field_names": [
+    "currentGear",
+    "maxGears",
+    "engineRPM",
+    "maxRPM",
+    "minRPM",
+    "accelerationForce",
+    "gearShiftSoundClip"
+  ],
+  "component_names": [
+    "Rigidbody",
+    "AudioSource",
+    "WheelCollider"
+  ],
+  "action_types": [
+    "decrement",
+    "reset",
+    "increment",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    3,
+    2
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "prompt": "sprint when shift held",
+  "prompt_hash": "6e937d47441a",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 1,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "normalSpeed",
+    "sprintMultiplier",
+    "isSprinting"
+  ],
+  "component_names": [
+    "CharacterController"
+  ],
+  "action_types": [
+    "reset_speed",
+    "set",
+    "modify_speed"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

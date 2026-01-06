@@ -1,0 +1,31 @@
+{
+  "prompt": "AI switching between patrol and chase",
+  "prompt_hash": "31fce75c7268",
+  "n_fields": 5,
+  "n_behaviors": 2,
+  "n_components": 3,
+  "has_state_machine": true,
+  "n_states": 2,
+  "field_names": [
+    "patrolPoints",
+    "currentPatrolIndex",
+    "playerDetectionRadius",
+    "chaseSpeed",
+    "patrolSpeed"
+  ],
+  "component_names": [
+    "NavMeshAgent",
+    "Animator",
+    "AudioSource"
+  ],
+  "action_types": [
+    "follow",
+    "move",
+    "set_agent_speed",
+    "set_animation"
+  ],
+  "actions_per_behavior": [
+    3,
+    3
+  ]
+}

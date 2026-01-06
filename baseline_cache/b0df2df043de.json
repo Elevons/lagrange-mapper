@@ -1,0 +1,19 @@
+{
+  "prompt": "static decoration with no behavior",
+  "prompt_hash": "b0df2df043de",
+  "n_fields": 2,
+  "n_behaviors": 0,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "decorationType",
+    "isInteractive"
+  ],
+  "component_names": [
+    "Transform",
+    "Renderer"
+  ],
+  "action_types": [],
+  "actions_per_behavior": []
+}

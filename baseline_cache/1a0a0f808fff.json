@@ -1,0 +1,27 @@
+{
+  "prompt": "door opening and closing states",
+  "prompt_hash": "1a0a0f808fff",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "openAngle",
+    "openSpeed",
+    "isLocked"
+  ],
+  "component_names": [
+    "Animator",
+    "Collider"
+  ],
+  "action_types": [
+    "open",
+    "close",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

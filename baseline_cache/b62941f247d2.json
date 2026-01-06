@@ -1,0 +1,29 @@
+{
+  "prompt": "NPC with dialogue and quest states",
+  "prompt_hash": "b62941f247d2",
+  "n_fields": 3,
+  "n_behaviors": 3,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 4,
+  "field_names": [
+    "questStage",
+    "currentDialogue",
+    "hasCompletedQuest"
+  ],
+  "component_names": [
+    "Dialogue",
+    "InteractionTrigger"
+  ],
+  "action_types": [
+    "show_dialogue",
+    "update_quest_stage",
+    "grant_reward",
+    "highlight_current_objective"
+  ],
+  "actions_per_behavior": [
+    2,
+    2,
+    3
+  ]
+}

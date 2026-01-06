@@ -1,0 +1,106 @@
+{
+  "structural_0": {
+    "name": "stateful_moderate_animated",
+    "type": "structural_cliche",
+    "pattern": {
+      "field_count_range": [
+        2,
+        3
+      ],
+      "field_count_avg": 2.3333333333333335,
+      "behavior_count_range": [
+        2,
+        2
+      ],
+      "behavior_count_avg": 2.0,
+      "always_has_state_machine": true,
+      "state_machine_rate": 1.0,
+      "common_components": [
+        "Transform",
+        "Animator"
+      ]
+    },
+    "prevalence": 0.05454545454545454,
+    "sample_count": 3,
+    "sample_prompts": [
+      "NPC idle to talking transition",
+      "weapon with multiple fire modes",
+      "boss with multiple attack phases"
+    ]
+  },
+  "structural_1": {
+    "name": "stateless_minimal",
+    "type": "structural_cliche",
+    "pattern": {
+      "field_count_range": [
+        1,
+        3
+      ],
+      "field_count_avg": 1.4848484848484849,
+      "behavior_count_range": [
+        1,
+        2
+      ],
+      "behavior_count_avg": 1.2121212121212122,
+      "never_has_state_machine": true,
+      "state_machine_rate": 0.0
+    },
+    "prevalence": 0.6,
+    "sample_count": 33,
+    "sample_prompts": [
+      "enemy that follows player",
+      "sound that plays on start",
+      "object that spins"
+    ]
+  },
+  "structural_2": {
+    "name": "stateful_moderate",
+    "type": "structural_cliche",
+    "pattern": {
+      "field_count_range": [
+        2,
+        3
+      ],
+      "field_count_avg": 2.0833333333333335,
+      "behavior_count_range": [
+        1,
+        2
+      ],
+      "behavior_count_avg": 1.3333333333333333,
+      "always_has_state_machine": true,
+      "state_machine_rate": 1.0
+    },
+    "prevalence": 0.21818181818181817,
+    "sample_count": 12,
+    "sample_prompts": [
+      "background music player",
+      "weapon toggling between fire modes",
+      "spawn only if room is empty"
+    ]
+  },
+  "structural_4": {
+    "name": "stateless_minimal",
+    "type": "structural_cliche",
+    "pattern": {
+      "field_count_range": [
+        0,
+        0
+      ],
+      "field_count_avg": 0.0,
+      "behavior_count_range": [
+        0,
+        0
+      ],
+      "behavior_count_avg": 0.0,
+      "never_has_state_machine": true,
+      "state_machine_rate": 0.0
+    },
+    "prevalence": 0.07272727272727272,
+    "sample_count": 4,
+    "sample_prompts": [
+      "empty container object",
+      "empty container object",
+      "static decoration with no behavior"
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "prompt": "magnet pulling metal objects",
+  "prompt_hash": "bbdd0dd8d7f3",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "magnetStrength",
+    "pullRadius",
+    "metalLayerMask"
+  ],
+  "component_names": [
+    "Rigidbody",
+    "Collider"
+  ],
+  "action_types": [
+    "attach_to_magnet",
+    "apply_force",
+    "rotate_object",
+    "disable_physics"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

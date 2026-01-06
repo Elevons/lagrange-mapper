@@ -1,0 +1,28 @@
+{
+  "prompt": "enemy that follows player",
+  "prompt_hash": "72a9805b5260",
+  "n_fields": 3,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 4,
+  "field_names": [
+    "moveSpeed",
+    "detectionRange",
+    "attackRange"
+  ],
+  "component_names": [
+    "NavMeshAgent",
+    "Transform"
+  ],
+  "action_types": [
+    "stop_movement",
+    "perform_attack",
+    "move",
+    "rotate"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

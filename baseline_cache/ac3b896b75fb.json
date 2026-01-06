@@ -1,0 +1,26 @@
+{
+  "prompt": "object affected by wind force",
+  "prompt_hash": "ac3b896b75fb",
+  "n_fields": 4,
+  "n_behaviors": 1,
+  "n_components": 2,
+  "has_state_machine": true,
+  "n_states": 3,
+  "field_names": [
+    "windStrength",
+    "windDirection",
+    "swayIntensity",
+    "maxWindForce"
+  ],
+  "component_names": [
+    "Rigidbody",
+    "Transform"
+  ],
+  "action_types": [
+    "apply_force",
+    "rotate_object"
+  ],
+  "actions_per_behavior": [
+    2
+  ]
+}

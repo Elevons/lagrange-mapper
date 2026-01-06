@@ -1,0 +1,26 @@
+{
+  "prompt": "invisible trigger zone",
+  "prompt_hash": "e1ffdc3e820d",
+  "n_fields": 2,
+  "n_behaviors": 2,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "triggerRadius",
+    "triggeredObjects"
+  ],
+  "component_names": [
+    "BoxCollider",
+    "Trigger"
+  ],
+  "action_types": [
+    "remove",
+    "broadcast",
+    "add"
+  ],
+  "actions_per_behavior": [
+    2,
+    2
+  ]
+}

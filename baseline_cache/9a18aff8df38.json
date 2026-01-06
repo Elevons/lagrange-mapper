@@ -1,0 +1,26 @@
+{
+  "prompt": "collectible that gives points",
+  "prompt_hash": "9a18aff8df38",
+  "n_fields": 3,
+  "n_behaviors": 1,
+  "n_components": 2,
+  "has_state_machine": false,
+  "n_states": 0,
+  "field_names": [
+    "pointValue",
+    "collectSound",
+    "destroyOnCollect"
+  ],
+  "component_names": [
+    "BoxCollider",
+    "AudioSource"
+  ],
+  "action_types": [
+    "remove_object",
+    "add_points",
+    "play_sound"
+  ],
+  "actions_per_behavior": [
+    3
+  ]
+}

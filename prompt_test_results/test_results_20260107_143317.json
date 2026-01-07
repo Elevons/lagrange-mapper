@@ -1,0 +1,270 @@
+[
+  {
+    "prompt_num": 1,
+    "prompt": "Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase.",
+    "timestamp": "2026-01-07T14:28:17.229543",
+    "oneshot_code": "using System.Collections;\nusing System.Collections.Generic;\nusing UnityEngine;\n\npublic class SpinningExplosion : MonoBehaviour\n{\n    [Header(\"Spin Settings\")]\n    public float startSpeed = 10f;\n    public float maxSpd = 100f;\n    public float spinUpTime = 1.5f; // seconds to reach max speed\n\n    private float currentSpeed = startSpeed;\n    private float timer = 0f;\n\n    [Header(\"Explosion & Sound\")]\n    public AudioSource mainSound;\n    public GameObject explosionPrefab;\n    public List<GameObject> explosionObjects = new List<GameObject>();\n    public int numExplosions = 10;\n    public Transform[] randomDirectionVectors; // Assign in inspector\n\n    [Header(\"Visual Effects\")]\n    public Material baseMaterial;\n\n    void Start()\n    {\n        mainSound = GetComponent<AudioSource>();\n        if (explosionPrefab == null) explosionPrefab = new GameObject(\"Explosion\");\n        if (randomDirectionVectors.Length != numExplosions)\n            Debug.LogWarning(\"Random direction vectors count does not match explosions count!\");\n        // Assign default random directions if needed\n        for (int i = 0; i < numExplosions; i++) {\n            randomDirectionVectors[i] = new Vector3(Random.Range(-1f, 1f), Random.Range(-1f, 1f), Random.Range(-1f, 1f)).normalized;\n        }\n\n        // Assign base material\n        if (baseMaterial != null)\n            baseMaterial = GetComponent<Renderer>().material;\n        else {\n            Renderer renderer = GetComponent<Renderer>();\n            if (renderer == null) Debug.LogWarning(\"No Renderer on SpinningExplosion!\");\n            baseMaterial = renderer.material;\n        }\n\n        timer = 0f;\n        currentSpeed = startSpeed;\n    }\n\n    void Update()\n    {\n        Spin();\n        HandleColorShift();\n\n        mainSound.Play();\n        mainSound.volume = Mathf.Lerp(0f, 1f, Time.deltaTime / spinUpTime); // get louder over time\n\n        if (currentSpeed < maxSpd) timer += Time.deltaTime;\n        else if (timer < spinUpTime) { // still spinning up but at max speed\n            timer = Mathf.Clamp(timer - Time.deltaTime * 2f, 0f, spinUpTime);\n        } else {\n            timer = 0f; // reached peak spin\n        }\n    }\n\n    void Spin()\n    {\n        if (currentSpeed > 0)\n        {\n            transform.Rotate(Vector3.up * currentSpeed * Time.deltaTime);\n            // Increase speed exponentially for 'faster and faster'\n            currentSpeed = Mathf.Lerp(currentSpeed, maxSpd, Time.deltaTime * 10f); // fast ramp\n        }\n    }\n\n    void HandleColorShift()\n    {\n        if (currentSpeed < maxSpd)\n        {\n            float percent = currentSpeed / maxSpd;\n            Color color = baseMaterial.color;\n            color.r = Mathf.Lerp(0f, 1f, percent); // blue to red: r from 0 to 1\n            baseMaterial.color = color;\n        }\n    }\n\n    void OnTriggerEnter(Collider other)\n    {\n        if (currentSpeed >= maxSpd && timer <= spinUpTime) // reached explosion phase\n        {\n            Destroy(gameObject);\n\n            for (int i = 0; i < numExplosions; i++)\n            {\n                GameObject newExplosion = Instantiate(explosionPrefab, transform.position,\n                    Quaternion.identity);\n                newExplosion.transform.parent = transform;\n                newExplosion.tag = $\"Explosion_{i}\";\n                explosionObjects.Add(newExplosion);\n\n                // Assign random direction\n                if (randomDirectionVectors.Length > i)\n                    newExplosion.transform.rotation = Quaternion.LookRotation(randomDirectionVectors[i] * Random.Range(1f, 3f));\n\n                // Each gets its own sound\n                GameObject gSound = Instantiate(newExplosion.GetComponent< AudioSource>() ?? new AudioSource(), \n                    newExplosion.transform.position,\n                    Quaternion.identity);\n                if (gSound != null)\n                    gSound.PlayOneShot(mainSoundClips[i]); // needs mainSoundClips array in inspector\n\n                // Optionally assign a unique material or effect here\n            }\n\n            // Optional: Remove explosion references after instantiation to avoid memory leaks\n            for (int j = 0; j < explosionObjects.Count; j++)\n                if (explosionObjects[j] != null)\n                    (explosionObjects[j] as Component).OnDestroy += null;\n    }\n\n    // You must provide an array of AudioSource in the inspector, one per explosion sound clip.\n    // Example: public AudioSource[] mainSoundClips;\n}",
+    "ir_json": {
+      "class_name": "AcceleratingSpawner",
+      "components": [
+        "Rigidbody",
+        "AudioSource"
+      ],
+      "fields": [
+        {
+          "name": "spinSpeed",
+          "type": "float",
+          "default": 0.0
+        },
+        {
+          "name": "maxSpinSpeed",
+          "type": "float",
+          "default": 100.0
+        },
+        {
+          "name": "soundVolume",
+          "type": "float",
+          "default": 0.1
+        },
+        {
+          "name": "materialColor",
+          "type": "string",
+          "default": "#0000FF"
+        },
+        {
+          "name": "explosionObjects",
+          "type": "int",
+          "default": 10
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "spinUp",
+          "trigger": "spinSpeed < maxSpinSpeed && !exploded",
+          "actions": [
+            {
+              "name": "apply angular velocity",
+              "parameters": {
+                "amount": "spinSpeed * 6.28"
+              }
+            },
+            {
+              "name": "increase soundVolume",
+              "amount": 0.02
+            },
+            {
+              "name": "changeMaterialColor",
+              "to": "#FF0000"
+            },
+            {
+              "name": "updateSpinSpeed",
+              "expression": "spinSpeed += 5"
+            }
+          ]
+        },
+        {
+          "name": "maxSpeedReached",
+          "trigger": "spinSpeed >= maxSpinSpeed && !exploded",
+          "actions": [
+            {
+              "name": "stop applying angular velocity"
+            },
+            {
+              "name": "destroy object and spawn explosion objects",
+              "count": "explosionObjects"
+            },
+            {
+              "name": "for each explosionObject in explosionObjects: create new GameObject with Rigidbody, random initial velocity, attach small sphere collider, assign unique sound effect"
+            },
+            {
+              "name": "set materialColor to #FF0000 permanently"
+            }
+          ]
+        },
+        {
+          "name": "explode",
+          "trigger": "!exploded && (spinSpeed >= maxSpinSpeed)",
+          "actions": [
+            {
+              "name": "play explosion sound on self"
+            },
+            {
+              "name": "destroy self",
+              "condition": true
+            }
+          ]
+        },
+        {
+          "name": "explosionBounce",
+          "trigger": "each explosionObject has been created and not destroyed",
+          "actions": [
+            {
+              "name": "set random direction for velocity"
+            },
+            {
+              "name": "apply random small force to Rigidbody"
+            }
+          ]
+        },
+        {
+          "name": "spinComplete",
+          "trigger": "!exploded && spinSpeed >= maxSpinSpeed",
+          "actions": [
+            {
+              "name": "destroy self"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\n\n[RequireComponent(typeof(Rigidbody))]\npublic class AcceleratingSpawner : MonoBehaviour\n{\n    public float spinSpeed = 0.0f;\n    [SerializeField] private float maxSpinSpeed = 100.0f;\n    public float soundVolume = 0.1f;\n    [SerializeField] private string materialColor = \"#0000FF\";\n    [SerializeField] private int explosionObjects = 10;\n\n    private bool exploded = false;\n    private Rigidbody rb;\n\n    void Start()\n    {\n        rb = GetComponent<Rigidbody>();\n    }\n\n    void Update()\n    {\n        if (!exploded && spinSpeed < maxSpinSpeed)\n        {\n            float angVel = spinSpeed * Mathf.PI * 2f; // 6.28 ≈ 2π\n            rb.AddAngularVelocity(new Vector3(0, 0, angVel));\n            \n            soundVolume += 0.02f;\n            if (soundVolume > 1.0f) soundVolume = 1.0f;\n            GetComponent<AudioSource>().volume = soundVolume;\n\n            // Change material color to red when spinning up\n            Material mainMat = GetComponent<Renderer>().material;\n            mainMat.color = Color.red; // Immediate visual feedback\n\n            spinSpeed += 5f;\n        }\n        else if (spinSpeed >= maxSpinSpeed && !exploded)\n        {\n            StopAllCoroutines();\n            Destroy(gameObject);\n            SpawnExplosionObjects();\n        }\n\n        // Spin complete check (handles both cases above for safety)\n        if (exploded || spinSpeed >= maxSpinSpeed)\n        {\n            Destroy(gameObject);\n        }\n    }\n\n    void OnTriggerEnter(Collider other)\n    {\n        // Optional: If you want to start spinning when touched, implement here.\n        // For now, we rely on the scheduled SpinUp via Update.\n    }\n\n    void SpawnExplosionObjects()\n    {\n        int count = explosionObjects;\n        for (int i = 0; i < count; i++)\n        {\n            GameObject obj = new GameObject();\n            obj.name = $\"Explosion_{i}\";\n            Rigidbody expRb = obj.AddComponent<Rigidbody>();\n            expRb.isKinematic = false;\n\n            // Assign random initial velocity and direction\n            Vector3 randDir = Random.insideUnitSphere * 10f;\n            expRb.velocity = randDir;\n\n            // Add collider (small sphere)\n            GameObject col = new GameObject(\"Collider\");\n            col.AddComponent<SphereCollider>();\n            col.transform.SetParent(obj.transform);\n            col.transform.localPosition = new Vector3(0, -0.5f, 0); // Slightly above surface\n            obj.transform.position = col.transform.position;\n            col.SetActive(true);\n\n            // Assign random sound effect (pseudo code; implement with actual asset loading)\n            string sf = $\"Explosion_{i}_{Random.Range(1,10)}\";\n            // Example: Instantiate your explosion sounds here if you have an array\n\n            // Set material color to red for all explosion objects\n            Renderer rend = obj.GetComponent<Renderer>();\n            if (rend != null) rend.material.color = Color.red;\n        }\n    }\n\n    void OnCollisionEnter(Collision collision)\n    {\n        // Optional: If explosions should be triggered by collision, handle here.\n        // For now, rely on Update-based spin up to max speed then manually explode\n        // You can add explosion logic if needed (e.g., when collides with a target plane)\n    }\n\n    void OnDrawGizmos()\n    {\n        // Optional: Visualize spinning axis or color change\n        Material mat = GetComponent<Renderer>().material;\n        Color c = new Color();\n        if (spinSpeed < maxSpinSpeed && !exploded)\n            c = Color.green; // Spin up phase\n        else if (spinSpeed >= maxSpinSpeed && !exploded)\n            c = Color.red;   // Explosion imminent\n        mat.color = c;\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 8,
+    "grade": null,
+    "error": null
+  },
+  {
+    "prompt_num": 2,
+    "prompt": "Make a gravity well that pulls nearby rigidbodies toward it with increasing force based on distance, plays a low-frequency rumble that gets louder as objects get closer, changes the light intensity based on how many objects are currently being pulled, and creates particle effects at the point where objects collide with the center, all while rotating the entire gravity well slowly.",
+    "timestamp": "2026-01-07T14:29:17.589514",
+    "oneshot_code": "using System.Collections;\nusing System.Collections.Generic;\nusing UnityEngine;\n\npublic class GravityWell : MonoBehaviour\n{\n    [Header(\"Gravity Settings\")]\n    public float gravityCenter = (0, 0, 0); // Center position of the gravity well in world space\n    public float maxForce = 100f;          // Maximum pull force at closest distance\n    public float minDistance = 0.1f;      // Minimum effective range for gravity\n    public float falloffExponent = 3f;     // How quickly force decreases with distance (higher = steeper)\n    public float rotationSpeed = 0.02f;   // Degrees per second to rotate the well\n\n    [Header(\"Audio Settings\")]\n    public AudioSource audioSource;\n    public float rumbleFrequency = 20f;\n    public float maxRumbleVolume = 0.7f;\n    public float minRumbleDistance = 5f;   // Meters\n    public float maxRumbleDistance = 1f;  // Meters\n\n    [Header(\"Visual/Light Settings\")]\n    public GameObject lightPrefab;\n    public Color activeLightColor = new Color(0.3f, 0.4f, 0.7f, 0.9f);\n    public int minObjectsForActiveLight = 1;\n\n    private Vector3 centerPosition;\n    private Rigidbody2D[] trackedRbodies = new Rigidbody2D[16];\n    private int activeBodyCount = 0;\n    private bool hasAudioSource = false;\n\n    void Start()\n    {\n        centerPosition = transform.position;\n        if (audioSource == null)\n            audioSource = GetComponent<AudioSource>();\n        if (lightPrefab != null)\n            Instantiate(lightPrefab, centerPosition, Quaternion.identity);\n\n        // Enable colliders and rigidbodies for affected objects only if desired\n        // (Not implemented here, but can be added as needed)\n\n        // Start rotating the well\n        StartCoroutine(RotateWell());\n    }\n\n    void Update()\n    {\n        ApplyGravity();\n        PlayRumble();\n        ManageLight();\n    }\n\n    void OnTriggerEnter2D(Collider2D other)\n    {\n        Rigidbody2D rb = other.GetComponent<Rigidbody2D>();\n        if (rb != null && !trackedRbodies.Contains(rb))\n        {\n            AddToTrackedRbodies(rb);\n            activeBodyCount++;\n            PlayCollisionParticle();\n        }\n    }\n\n    void OnTriggerExit2D(Collider2D other)\n    {\n        Rigidbody2D rb = other.GetComponent<Rigidbody2D>();\n        if (rb != null && trackedRbodies.Contains(rb))\n        {\n            RemoveFromTrackedRbodies(rb);\n            activeBodyCount--;\n            DestroyAnyActiveLight();\n        }\n    }\n\n    void ApplyGravity()\n    {\n        float distToCenter = Vector3.Distance(transform.position, gravityCenter);\n\n        // Only apply force if within effective range\n        if (distToCenter < minDistance)\n        {\n            Vector3 toCenter = (gravityCenter - transform.position).normalized;\n            float inversePower = Mathf.InversePower(distToCenter, falloffExponent);\n            float force = maxForce * inversePower;\n\n            // Pull all tracked rigidbodies toward the center\n            foreach (var rb in trackedRbodies)\n            {\n                if (rb != null)\n                    rb.AddForce(toCenter * force * Time.deltaTime);\n            }\n        }\n    }\n\n    void PlayRumble()\n    {\n        if (!hasAudioSource) return;\n\n        int activeColliders = 0;\n        foreach (var rb in trackedRbodies)\n            if (rb != null && rb.isKinematic == false)\n                activeColliders++;\n\n        float rumbleThreshold = minObjectsForActiveLight * 2f; // Simple threshold\n        if (activeColliders >= rumbleThreshold && activeColliders > 0)\n        {\n            float distToCenter = Vector3.Distance(transform.position, gravityCenter);\n            // Vary distance for rumble based on well's center position and current object proximity (approximate)\n            float effectiveRumbleDist = Mathf.Lerp(minRumbleDistance, maxRumbleDistance,\n                1 - Mathf.InverseLerp(minDistance, distToCenter, minRumbleDistance));\n\n            audioSource.PlayOneShot(new AudioClip { data = new System.Text.StringBuilder()\n                {\n                    Append(\"rumble_\")\n                }.Append((int)(Time.time * rumbleFrequency / 1000)).ToString(),\n                pitch = (float)rumbleFrequency,\n                volume = Mathf.Lerp(0f, maxRumbleVolume, effectiveRumbleDist < maxRumbleDistance ? 1 : 0)\n            );\n        }\n    }\n\n    void ManageLight()\n    {\n        if (activeBodyCount >= minObjectsForActiveLight && !DestroyAnyActiveLight())\n            CreateActiveLight();\n        else\n            DestroyActiveLight();\n    }\n\n    void CreateActiveLight()\n    {\n        GameObject light = Instantiate(lightPrefab, centerPosition, Quaternion.identity);\n        light.transform.parent = transform;\n        light.GetComponent<Light>().color = activeLightColor;\n    }\n\n    void DestroyActiveLight()\n    {\n        if (transform.childCount > 0 && transform.GetChild(0).isAudioprevious())\n            Destroy(transform.GetChild(0));\n    }\n\n    void AddToTrackedRbodies(Rigidbody2D rb)\n    {\n        Array.Resize(ref trackedRbodies, trackedRbodies.Length + 1);\n        trackedRbodies[trackedRbodies.Length - 1] = rb;\n    }\n\n    void RemoveFromTrackedRbodies(Rigidbody2D rb)\n    {\n        for (int i = 0; i < trackedRbodies.Length; i++)\n            if (trackedRbodies[i] == rb)\n                trackedRbodies[i] = null;\n        Array.Resize(ref trackedRbodies, trackedRbodies.Length - (activeBodyCount > 0 ? 1 : 0));\n    }\n\n    void PlayCollisionParticle()\n    {\n        // Spawn a particle effect at the transform position\n        ParticleSystem ps = Instantiate(ParticleSystem, transform.position,\n            Quaternion.identity) as ParticleSystem;\n        ps.startNew();\n        ps.particles[0].color = Color.red; // Or whatever color you want for collision\n        ps_particleEffect ps_p = ps.addParticle(1f, 0.2f, 0f); // Example: small spark\n    }\n\n    IEnumerator RotateWell()\n    {\n        while (true)\n        {\n            transform.Rotate(Vector3.up * rotationSpeed * Time.deltaTime);\n            yield return null;\n        }\n    }\n}",
+    "ir_json": {
+      "class_name": "GravityWell",
+      "components": [
+        "Rigidbody"
+      ],
+      "fields": [
+        {
+          "name": "rotationSpeed",
+          "type": "float",
+          "default": 0.01
+        },
+        {
+          "name": "rumbleVolume",
+          "type": "float",
+          "default": 0.05
+        },
+        {
+          "name": "lightIntensity",
+          "type": "float",
+          "default": 1.0
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "ApplyGravity",
+          "trigger": "On physics update of Rigidbody components within range",
+          "actions": [
+            "Calculate distance from each nearby Rigidbody to center",
+            "For each Rigidbody, compute force = G * (mass) * (1/distance^2)",
+            "Apply the calculated force to the Rigidbody"
+          ]
+        },
+        {
+          "name": "ManageRumble",
+          "trigger": "When any Rigidbody is within 10 units of GravityWell center and not already playing rumble sound",
+          "actions": [
+            "Play audio clip with low frequency and volume = (rumbleVolume * (1 / min_distance_to_nearby_Rigidbody))",
+            "Update light intensity at the GravityWell to (lightIntensity + 0.2 * number_of_pulled_Rigidbodies)"
+          ]
+        },
+        {
+          "name": "DetectCollisionAndParticles",
+          "trigger": "When a Rigidbody collides with the center point of GravityWell",
+          "actions": [
+            "Create particle effect at collision point",
+            "Destroy the collided Rigidbody"
+          ]
+        },
+        {
+          "name": "RotateWell",
+          "trigger": "Every physics frame",
+          "actions": [
+            "Rotate the GravityWell's local transform by rotationSpeed * Time.deltaTime (around Z axis)"
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\n\npublic class GravityWell : MonoBehaviour\n{\n    public float rotationSpeed = 0.01f;\n    [SerializeField] private float rumbleVolume = 0.05f;\n    [SerializeField] private float lightIntensity = 1.0f;\n\n    private Rigidbody rb;\n    private AudioSource audioSource;\n    private Transform centerTransform;\n    private Collider[] wellCollider; // For broad area checks\n    private ParticleSystem particleEffect;\n\n    void Start()\n    {\n        rb = GetComponent<Rigidbody>();\n        if (rb == null) { Debug.LogError(\"GravityWell requires a Rigidbody component.\"); }\n        audioSource = GetComponent<AudioSource>();\n        centerTransform = transform;\n    }\n\n    void Update()\n    {\n        RotateWell();\n        ApplyGravity();\n        ManageRumble();\n        DetectCollisionAtCenter();\n    }\n\n    void ApplyGravity()\n    {\n        Vector3 center = centerTransform.position;\n        float G = 6.674f * 10f; // Simple constant\n\n        List<Rigidbody> nearbyRb = new List<Rigidbody>();\n        Physics.SphereCast(center, 20f, Vector3.up, out RaycastHit[] hits,\n            (int)defaultLayerMask, QueryTriggerInteraction.Ignore);\n\n        foreach (var hit in hits)\n        {\n            if (hit.collider != null && hit.collider.CompareTag(\"Rigidbody\"))\n                nearbyRb.Add(hit.collider.rigidbody);\n        }\n\n        foreach (var rbIn in nearbyRb)\n        {\n            float dist = Vector3.Distance(center, rbIn.position);\n            if (dist < 0.01f) continue; // Skip division by zero\n            float forceMagnitude = G * rbIn.mass / (dist * dist + 0.001f);\n            Vector3 dir = (rbIn.position - center).normalized;\n            rbIn.transform.AddForce(dir * forceMagnitude); // Use transform for safety\n        }\n    }\n\n    void ManageRumble()\n    {\n        if (!audioSource.isPlaying && nearbyPulledRigidbodies > 0 && !isPlayingRumble)\n        {\n            float minDist = float.MaxValue;\n            foreach (var rb in FindObjectsOfType<Rigidbody>())\n            {\n                if (Vector3.Distance(rb.position, centerTransform.position) < 10f)\n                    minDist = Mathf.Min(minDist, Vector3.Distance(rb.position, centerTransform.position));\n            }\n            if (minDist != float.MaxValue && rumbleVolume > 0.01f)\n            {\n                audioSource.PlayOneShot(new AudioClip(\"RumbleSound\")); // Use proper asset reference\n                audioSource.volume = Mathf.Clamp(rumbleVolume * (1f / Mathf.Min(minDist, 10f)), 0f, 1f);\n                isPlayingRumble = true;\n            }\n        }\n\n        nearbyPulledRigidbodies = 0;\n        foreach (var rb in FindObjectsOfType<Rigidbody>())\n        {\n            if (rb.transform == centerTransform || rb.transform.IsChildOf(centerTransform))\n            {\n                if (!rb.isKinematic && Vector3.Distance(rb.position, centerTransform.position) <= 15f)\n                    nearbyPulledRigidbodies++;\n            }\n        }\n        lightIntensity = Mathf.Min(lightIntensity + 0.2f * nearbyPulledRigidbodies * 5f, 10f); // Clamp for safety\n    }\n\n    void RotateWell()\n    {\n        transform.Rotate(0f, 0f, rotationSpeed * Time.deltaTime);\n    }\n\n    void DetectCollisionAtCenter()\n    {\n        wellCollider = Physics.OverlapSphere(centerTransform.position, 0.1f, (int)defaultLayerMask); // Small radius to check center\n        bool collided = false;\n        foreach (var hit in wellCollider)\n        {\n            if (hit.transform == centerTransform || !hit.transform.IsChildOf(centerTransform))\n                continue; // Ignore self-collision\n\n            if (hit.collider != null && hit.collider.CompareTag(\"Rigidbody\"))\n            {\n                collided = true;\n                break;\n            }\n        }\n\n        if (collided)\n        {\n            particleEffect = GetComponent<ParticleSystem>();\n            if (particleEffect != null && !particleEffect.isPlaying)\n            {\n                // Position at collision point (centerTransform.position)\n                particleEffect.Play(new Vector3(centerTransform.position));\n                // Attempt to disable Rigidbody components (careful with references!)\n                foreach (var rb in FindObjectsOfType<Rigidbody>())\n                {\n                    if (Vector3.Distance(rb.transform.position, centerTransform.position) < 0.01f &&\n                        !rb.isKinematic)\n                    {\n                        rb.gameObject.SetActive(false);\n                        break;\n                    }\n                }\n            }\n        }\n    }\n\n    // Added missing fields\n    private int nearbyPulledRigidbodies = 0;\n    private bool isPlayingRumble = false;\n}",
+    "ir_steered": true,
+    "ir_rag_docs": 8,
+    "grade": null,
+    "error": null
+  },
+  {
+    "prompt_num": 3,
+    "prompt": "Build a script that turns any object into a musical instrument - when you collide with it, it plays a note based on where you hit it (top plays high notes, bottom plays low notes), the object's color shifts to match the note's frequency, it vibrates with the sound, and leaves a trail of particles that fade out over 2 seconds.",
+    "timestamp": "2026-01-07T14:30:58.225743",
+    "oneshot_code": "using System.Collections;\nusing System.Collections.Generic;\nusing UnityEngine;\n\npublic class MusicalInstrument : MonoBehaviour\n{\n    [Header(\"Audio Settings\")]\n    public AudioSource audioSource;\n    public float baseFrequency = 220f; // C3 default\n    public int minNote = 24; // C2 (27.5Hz) but mapped to MIDI note 24\n    public int maxNote = 84; // C7 (1046.5Hz) but here up to G8 (~2000Hz)\n    float frequencyMultiplier = (maxNote - minNote) / (8192f / 20); // Linear map from minNote to ~2000Hz\n\n    [Header(\"Visual Settings\")]\n    public Color startColor;\n    public Color targetColor;\n    float colorTransitionTime = 0.3f;\n\n    [Header(\"Vibration & Effects\")]\n    public LayerMask collisionLayer;\n    public ParticleSystem vibrationParticles;\n    public ParticleSystem trailParticles;\n\n    private Vector3 hitPoint;\n    private NotePlayer notePlayer; // Helper script for MIDI playback\n    private Color currentColor;\n    private bool isPlaying = false;\n    float colorChangeTime = 0f;\n    float vibrationDelay = 0.05f;\n\n    void Start()\n    {\n        audioSource = GetComponent<AudioSource>();\n        if (vibrationParticles == null) CreateVibrationParticles();\n        if (trailParticles == null) CreateTrailParticles();\n\n        notePlayer = new NotePlayer(); // Assign via inspector or create here\n        currentColor = startColor;\n    }\n\n    void Update()\n    {\n        ColorTransition();\n        if (isPlaying)\n            notePlayer.PlayCurrentNote();\n    }\n\n    void OnTriggerEnter(Collider other)\n    {\n        if (!collisionLayer.CompareTag(other.tag) || !other.CompareTag(\"Player\")) return;\n\n        // Get collision point relative to instrument center\n        Vector3 hitPointLocal = transform.InverseTransformPoint(other.transform.position);\n        hitPoint = hitPointLocal - transform.position; // Offset from object center\n\n        float y = hitPoint.y;\n        float height = transform.localScale.y * 0.5f; // Half size as \"up\" is +y\n        float normalizedY = (y / height) - 0.5f; // -1 to +1\n\n        // Map vertical position to note frequency (linear for simplicity)\n        int midiNote = Mathf.RoundToInt(minNote + normalizedY * (maxNote - minNote));\n        if (midiNote < minNote || midiNote > maxNote) midiNote = Mathf.Clamp(midiNote, minNote, maxNote);\n\n        float freq = (float)System.Numerics.MidpointToFrequency(midiNote);\n        // Clamp frequency to audioSource.maxFrequency (~20kHz)\n        freq = Mathf.Min(freq, audioSource.maxFrequency);\n\n        PlaySoundAndSetFrequency(freq, midiNote);\n\n        // Color shift\n        CurrentColorToTargetColor(targetColor, normalizedY < 0f ? 1 : -1); // Up/down\n\n        // Vibrate after trigger (delayed for smoothness)\n        StartCoroutine(StartVibration());\n    }\n\n    void OnTriggerExit(Collider other)\n    {\n        if (other.CompareTag(\"Player\"))\n        {\n            StopAllCoroutines();\n            audioSource.Stop();\n            notePlayer.StopPlaying();\n            trailParticles.Stop();\n            vibrationParticles.Stop();\n        }\n    }\n\n    void PlaySoundAndSetFrequency(float freq, int midiNote)\n    {\n        audioSource.frequency = freq;\n        audioSource.PlayOneShot(new SoundClip(midiNote)); // Use a helper sound clip script\n        if (!isPlaying) StartVibration(); // Only start vibration on first play\n        isPlaying = true;\n    }\n\n    void ColorTransition()\n    {\n        if (colorChangeTime <= 0f) return;\n\n        currentColor.lerpTarget(currentColor, targetColor, Time.deltaTime * colorTransitionTime);\n        colorChangeTime -= Time.deltaTime * colorTransitionTime;\n    }\n\n    void CreateVibrationParticles()\n    {\n        if (vibrationParticles == null)\n            vibrationParticles = gameObject.AddComponent<ParticleSystem>();\n        vibrationParticles.startCount = 1;\n        vibrationParticles.particlesPerEmission = 3;\n        vibrationParticles.density = 0.01f;\n        vibrationParticles.color = Color.red; // Default\n    }\n\n    void CreateTrailParticles()\n    {\n        if (trailParticles == null)\n            trailParticles = gameObject.AddComponent<ParticleSystem>();\n        trailParticles.startCount = 1;\n        trailParticles.particlesPerEmission = 10;\n        trailParticles.lifetime = 2f;\n        trailParticles.color = startColor;\n        trailParticles.density = 0.02f;\n    }\n\n    IEnumerator StartVibration()\n    {\n        yield return new WaitForSeconds(vibrationDelay);\n        if (vibrationParticles != null)\n            vibrationParticles.Play();\n        // Optionally, trigger a script on the object to make it vibrate\n    }\n\n    class NotePlayer : MonoBehaviour\n    {\n        public int currentMidiNote = 60; // C4 default\n        bool isPlaying = false;\n\n        void Update()\n        {\n            if (isPlaying && Time.time >= 0.1f)\n                PlayCurrentNote();\n        }\n\n        void PlayCurrentNote()\n        {\n            audioSource.PlayOneShot(new SoundClip(currentMidiNote));\n        }\n\n        public void PlayCurrentNote()\n        {\n            if (!isPlaying) \n            {\n                currentMidiNote = midiNote; // Set from parent\n                isPlaying = true;\n                StopAll();\n            }\n            else\n            {\n                audioSource.Play(); // Keep playing\n            }\n        }\n\n        public void StopPlaying()\n        {\n            isPlaying = false;\n            if (audioSource != null) audioSource.Stop();\n        }\n    }\n\n    class SoundClip : MonoBehaviour\n    {\n        public int midiNote;\n\n        void Start()\n        {\n            AudioSource audio = new AudioSource();\n            audio.SetLoopMode(AudioLoopMode.OneShot);\n            audio.PlayOneShot(new UnityAudioClip(midiNote));\n            // Attach to parent for frequency control if needed\n            if (parent != null)\n                parent.audioSource.frequency = (audioSource as AudioSource).frequency;\n        }\n\n        // Dummy implementation - in real use, you'd use a proper Sound object or use OnPlay()\n    }\n}",
+    "ir_json": {
+      "class_name": "MusicalInstrumentBehavior",
+      "components": [
+        "Rigidbody"
+      ],
+      "fields": [
+        {
+          "name": "baseFrequency",
+          "type": "float",
+          "default": 220.0
+        },
+        {
+          "name": "noteOffset",
+          "type": "float",
+          "default": 50.0
+        },
+        {
+          "name": "colorStart",
+          "type": "Vector3",
+          "default": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "trailDuration",
+          "type": "float",
+          "default": 2.0
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "OnCollisionEnter",
+          "trigger": "Physics.Collide && IsTrigger == false",
+          "actions": [
+            "Calculate impactPosition = (transform.position - otherTransform.position).normalized",
+            "angle = Vector3.Angle(impactPosition, transform.forward)",
+            "offset = angle * noteOffset",
+            "frequency = baseFrequency + offset",
+            "Clamp frequency between 130.0 and 10400.0",
+            "Set particleSystem to create trail with duration = trailDuration seconds",
+            "For each frame in trailDuration: spawn ParticleSystem at position, set color gradient from colorStart toward noteColor(frequency)",
+            "Apply force to rigidbody based on impact direction scaled by (frequency / baseFrequency) * 10",
+            "Set rigidbody.damping = 0.8 for vibration effect",
+            "PlayAudioWithFrequency(frequency)"
+          ]
+        },
+        {
+          "name": "ChangeColorBasedOnFrequency",
+          "trigger": "Always",
+          "actions": [
+            "Compute noteColor from frequency (e.g., map to HSV, then RGB)",
+            "Set material.color = Lerp(colorStart, computedColor, time * trailDuration)"
+          ]
+        },
+        {
+          "name": "VibrateObject",
+          "trigger": "Always while vibrating",
+          "actions": [
+            "ApplyForce(transform.position, transform.position + (transform.forward * (frequency / baseFrequency) * 0.5f)), ForceMode.VelocityChange"
+          ]
+        }
+      ]
+    },
+    "ir_code": "using System.Collections;\nusing UnityEngine;\n\n[RequireComponent(typeof(Rigidbody))]\npublic class MusicalInstrumentBehavior : MonoBehaviour\n{\n    public float baseFrequency = 220.0f;\n    [SerializeField] private float noteOffset = 50.0f;\n    public Vector3 colorStart = new Vector3(1, 1, 1);\n    [SerializeField] private float trailDuration = 2.0f;\n\n    private Rigidbody rigidbody;\n    private ParticleSystem particleSystem;\n    private Color[] colorGradient;\n    private float vibrationStrength = 10f;\n    private bool isVibrating = false;\n\n    void Start()\n    {\n        rigidbody = GetComponent<Rigidbody>();\n        if (particleSystem == null)\n            particleSystem = gameObject.AddComponent<ParticleSystem>();\n    }\n\n    void Update()\n    {\n        // Color transition\n        ChangeColorBasedOnFrequency();\n    }\n\n    void OnCollisionEnter(Collision collision)\n    {\n        var otherRb = collision.gameObject.GetComponent<Rigidbody>();\n        if (otherRb != null && !otherRb.isSleeping)\n        {\n            Vector3 impactDirection = (transform.position - collision.transform.position).normalized;\n            float angleToForward = Vector3.Angle(impactDirection, transform.forward);\n\n            // Calculate frequency offset based on angle\n            float angleOffset = angleToForward * noteOffset;\n            float newFrequency = baseFrequency + angleOffset;\n\n            ClampFrequency(newFrequency);\n\n            // Prepare particle system for trail\n            if (particleSystem == null)\n                particleSystem = gameObject.AddComponent<ParticleSystem>();\n            particleSystem.trailLength = trailDuration; // Set duration as trail length in meters\n\n            colorGradient = GenerateColorGradient(newFrequency);\n            InitializeParticleTrail();\n\n            // Apply vibration effect\n            float forceIntensity = newFrequency / baseFrequency * 10f;\n            Vector3 impactForceDir = Normalize(impactDirection) * (forceIntensity * 0.1f); // scaled down for realism\n            ApplyVibration(impactForceDir, forceIntensity);\n        }\n    }\n\n    private void InitializeParticleTrail()\n    {\n        particleSystem.startNew();\n        foreach (var trail in new ParticleSystem.Emitter[] { particleSystem.emitter }) // Simplified approach; adjust as needed\n        {\n            trail.color = colorGradient[0];\n            trail.startSpeed = 100f;\n            trail liftime = trailDuration * 1000f; // ms\n        }\n    }\n\n    private Color[] GenerateColorGradient(float frequency)\n    {\n        // Simple mapping: frequency -> hue (0-360), keep saturation and value high for color shift\n        float h = (frequency / 440.0f) % 1f * 360f; // 440Hz is middle A, map up to ~1043Hz (just for demo)\n        if (h < 0) h += 360f;\n        return Color.HSVToRGB(h, 1f, 1f).ToArray();\n    }\n\n    private void ChangeColorBasedOnFrequency()\n    {\n        float freq = baseFrequency; // Use current frequency or last calculated\n        Color noteColor = Color.HSVToRGB((freq / 440.0f) % 1f * 360f, 1f, 1f);\n        Material mainMat = GetComponent<Material>();\n        if (mainMat != null)\n            mainMat.color = Vector3.Lerp(colorStart, noteColor, Time.time * trailDuration * 2f);\n    }\n\n    private void ApplyVibration(Vector3 direction, float intensity)\n    {\n        isVibrating = true;\n        rigidbody.AddForce(direction * intensity, ForceMode.VelocityChange, 0.1f); // Small mass for effect\n        // Optionally set damping to simulate vibration\n        rigidbody.damping = 0.8f; \n        // Schedule stop after a few frames (approximate)\n    }\n\n    void FixedUpdate()\n    {\n        if (isVibrating && Time.fixedDeltaTime > 0.05f) // Vibrate for short burst\n        {\n            Vector3 dir = transform.forward;\n            float val = baseFrequency / 220f * 0.5f; // Small vibrato amplitude\n            dir = Normalize(dir + (dir * (Random.value * val)));\n            rigidbody.AddForce(dir, ForceMode.VelocityChange);\n        }\n        isVibrating = false;\n    }\n\n    private void OnDisable()\n    {\n        if (particleSystem != null)\n            particleSystem.enabled = false;\n    }\n\n    // Clamp frequency between 130 and 10400 Hz\n    private void ClampFrequency(float freq)\n    {\n        if (freq < 130f) freq = 130f;\n        if (freq > 10400f) freq = 10400f;\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 8,
+    "grade": null,
+    "error": null
+  }
+]

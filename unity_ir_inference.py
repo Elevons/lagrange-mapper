@@ -89,66 +89,42 @@ DEFAULT_MAX_TOKENS = 4096  # Increased to allow for longer responses
 # SYSTEM PROMPT
 # ============================================================================
 
-UNITY_IR_SYSTEM_PROMPT = """You generate Unity game behavior JSON.
+UNITY_IR_SYSTEM_PROMPT = """You are a Unity behavior specification generator. Output structured JSON describing game object behaviors.
 
-Output JSON with:
-- "class_name": name of the behavior class
-- "components": array of Unity component names (Slider, Image, Rigidbody, etc.)
-- "fields": array of field definitions with name, type, default
-- "behaviors": array of behavior objects with name, trigger, condition, actions
-
-ACTION FORMAT - Use verb-first task descriptions that match Unity API patterns:
-- "set the value of a slider"
-- "set the position of a transform"
-- "apply force to a rigidbody"
-- "play an audio clip"
-- "create a new instance of a prefab"
-- "destroy a game object"
-- "enable a component"
-- "disable a component"
-
-TRIGGER FORMAT - Use event descriptions:
-- "execute logic every frame" (Update)
-- "initialize when first enabled" (Start)
-- "detect collision with another object"
-- "respond to trigger enter event"
-- "call repeatedly at a fixed interval"
-
-CRITICAL: NO programming syntax.
-- NO operators like ==, <, >, ||, +, -, *, /
-- NO Unity API calls like Vector3.up, Time.deltaTime
-- NO function calls like distance(player)
-- NO template syntax like {value}
-
-Example output:
+STRUCTURE:
 {
-  "class_name": "PlayerHealth",
-  "components": ["Slider"],
-  "fields": [
-    {"name": "maxHealth", "type": "float", "default": 100},
-    {"name": "currentHealth", "type": "float", "default": 100}
-  ],
-  "behaviors": [
-    {
-      "name": "update_healthbar",
-      "trigger": "execute logic every frame",
-      "condition": null,
-      "actions": [
-        {"action": "set the value of a slider", "target": "healthSlider", "value": "health ratio"}
-      ]
-    },
-    {
-      "name": "take_damage",
-      "trigger": "respond to damage event",
-      "condition": null,
-      "actions": [
-        {"action": "reduce a field value", "target": "currentHealth", "amount": "damage amount"}
-      ]
-    }
-  ]
+  "class_name": "BehaviorName",
+  "components": ["Component1", "Component2"],
+  "fields": [{"name": "fieldName", "type": "fieldType", "default": value}],
+  "behaviors": [{"name": "...", "trigger": "...", "actions": [...]}]
 }
 
-Output ONLY valid JSON, no markdown, no explanations."""
+RULES:
+1. Use proper Unity types for fields: AudioClip, GameObject, Material, Sprite, Transform, float, int, bool, string
+2. Component names are exact Unity class names: Rigidbody, AudioSource, Collider, etc.
+3. Actions use simple verb phrases: "play audio", "apply force", "set position", "spawn prefab"
+4. NO code syntax: no operators (+,-,*), no API calls (Vector3.up), no functions (distance())
+
+Example:
+{
+  "class_name": "HealthPickup",
+  "components": ["Collider", "AudioSource"],
+  "fields": [
+    {"name": "healAmount", "type": "int", "default": 25},
+    {"name": "pickupSound", "type": "AudioClip", "default": null}
+  ],
+  "behaviors": [{
+    "name": "on_pickup",
+    "trigger": "detect collision with player",
+    "actions": [
+      {"action": "play audio clip", "target": "pickupSound"},
+      {"action": "heal player", "value": "healAmount"},
+      {"action": "destroy this object"}
+    ]
+  }]
+}
+
+Output ONLY valid JSON. No markdown, no code, no explanations."""
 
 # ============================================================================
 # DATA CLASSES

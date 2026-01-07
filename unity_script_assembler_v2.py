@@ -78,6 +78,30 @@ class UnityScriptAssemblerV2:
         
         prompt = f"""You are a Unity C# code generator. Convert this behavior specification into a complete, working Unity MonoBehaviour script.
 
+EXAMPLES OF CORRECT PATTERNS:
+
+Example 1 - Audio Field:
+IR: {{"name": "explosionSound", "type": "AudioClip", "default": null}}
+C#: public AudioClip explosionSound;
+Usage: audioSource.PlayOneShot(explosionSound);
+
+Example 2 - Prefab Field:
+IR: {{"name": "enemyPrefab", "type": "GameObject", "default": null}}
+C#: public GameObject enemyPrefab;
+Usage: Instantiate(enemyPrefab, position, Quaternion.identity);
+
+Example 3 - Collision Detection:
+IR: {{"trigger": "detect collision with another object"}}
+C#: void OnCollisionEnter(Collision collision) {{ ... }}
+
+Example 4 - Audio Action:
+IR: {{"action": "play an audio clip", "target": "explosionSound"}}
+C#: GetComponent<AudioSource>().PlayOneShot(explosionSound);
+
+Example 5 - Trigger Detection:
+IR: {{"trigger": "detect player entering trigger zone"}}
+C#: void OnTriggerEnter(Collider other) {{ if (other.CompareTag("Player")) {{ ... }} }}
+
 INPUT JSON:
 {ir_str}
 
@@ -104,12 +128,40 @@ INSTRUCTIONS:
 6. Make the code production-ready and compilable
 7. Add helpful comments for clarity
 
+CATEGORICAL RULES - Match intent patterns to Unity paradigms:
+
+1. TIME-BASED MOTION (keywords: "over X seconds", "for duration", "smoothly", "gradually"):
+   → ALWAYS use Coroutine + Vector3.Lerp or DOTween
+   → NEVER use AddForce for timed/smooth movement
+   → Pattern: StartCoroutine(MoveOverTime()); with while loop and Time.deltaTime
+
+2. INSTANT MOTION (keywords: "push", "launch", "explode", "impulse"):
+   → Use Rigidbody.AddForce with ForceMode.Impulse or ForceMode.Force
+   → Physics-based, not time-controlled
+
+3. MATERIAL/VISUAL CHANGES (keywords: "change color", "set material", "tint"):
+   → Use: GetComponent<Renderer>().material.color = Color.green;
+   → NEVER use .tint (doesn't exist)
+   → Modify existing material, don't create new ones unless necessary
+
+4. PROPERTY TRANSITIONS (keywords: "fade", "animate", "transition over time"):
+   → Use Coroutine with Mathf.Lerp for floats, Color.Lerp for colors
+   → Or use animation/animator if complex
+
+5. ONE-SHOT vs CONTINUOUS:
+   → "when X happens" / "on trigger" → Single execution in event handler
+   → "while X" / "continuously" → Update() loop or Coroutine
+
 IMPORTANT:
-- Map natural language descriptions to actual Unity API calls
+- Follow the patterns shown in the examples above
+- Fields with type "AudioClip" → declare as AudioClip, use with PlayOneShot()
+- Fields with type "GameObject" → declare as GameObject, use with Instantiate()
+- Fields with type "string" → keep as string (for names/IDs only)
 - Use GetComponent<T>() when accessing components
 - Handle null checks where appropriate
-- Use Vector3, Quaternion, and other Unity types correctly
-- For audio/particle instantiation from string prefabs, use Resources.Load or assume AudioClip/GameObject types
+- Use proper Unity types: Vector3, Quaternion, ForceMode, etc.
+- If playing audio but AudioSource not in components, declare: private AudioSource audioSource; and initialize in Start()
+- If using physics but Rigidbody not in components, declare: private Rigidbody rb; and initialize in Start()
 
 OUTPUT only the complete C# script, no markdown, no explanations:"""
         

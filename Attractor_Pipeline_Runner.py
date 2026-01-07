@@ -56,7 +56,7 @@ N_STRUCTURAL_CLUSTERS = 5
 # ============================================================================
 # API KEYS - SET YOUR KEY HERE
 # ============================================================================
-ANTHROPIC_API_KEY = "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"  # "sk-ant-..." 
+ANTHROPIC_API_KEY = ""  # "sk-ant-..." 
 
 # ============================================================================
 # MODEL CONFIGURATION

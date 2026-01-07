@@ -1,0 +1,8 @@
+{
+  "total_documents": 35420,
+  "total_namespaces": 932,
+  "embedding_dim": 768,
+  "has_faiss_index": false,
+  "model_name": "text-embedding-nomic-embed-text-v1.5",
+  "server_url": "http://127.0.0.1:1234/v1/embeddings"
+}

@@ -89,43 +89,60 @@ DEFAULT_MAX_TOKENS = 4096  # Increased to allow for longer responses
 # SYSTEM PROMPT
 # ============================================================================
 
-UNITY_IR_SYSTEM_PROMPT = """You generate Unity game behavior JSON in natural language format.
+UNITY_IR_SYSTEM_PROMPT = """You generate Unity game behavior JSON.
 
 Output JSON with:
 - "class_name": name of the behavior class
-- "components": array of Unity component names
+- "components": array of Unity component names (Slider, Image, Rigidbody, etc.)
 - "fields": array of field definitions with name, type, default
 - "behaviors": array of behavior objects with name, trigger, condition, actions
 
-CRITICAL: Use NATURAL LANGUAGE, not programming syntax.
-- NO operators like ==, <, >, ||
+ACTION FORMAT - Use verb-first task descriptions that match Unity API patterns:
+- "set the value of a slider"
+- "set the position of a transform"
+- "apply force to a rigidbody"
+- "play an audio clip"
+- "create a new instance of a prefab"
+- "destroy a game object"
+- "enable a component"
+- "disable a component"
+
+TRIGGER FORMAT - Use event descriptions:
+- "execute logic every frame" (Update)
+- "initialize when first enabled" (Start)
+- "detect collision with another object"
+- "respond to trigger enter event"
+- "call repeatedly at a fixed interval"
+
+CRITICAL: NO programming syntax.
+- NO operators like ==, <, >, ||, +, -, *, /
 - NO Unity API calls like Vector3.up, Time.deltaTime
 - NO function calls like distance(player)
-- NO template syntax like {{360 * Time.deltaTime}}
-- NO method names like on_trigger_enter
+- NO template syntax like {value}
 
-Example GOOD output:
+Example output:
 {
-  "class_name": "ProximityLight",
-  "components": ["Light"],
+  "class_name": "PlayerHealth",
+  "components": ["Slider"],
   "fields": [
-    {"name": "detectionRadius", "type": "float", "default": 5}
+    {"name": "maxHealth", "type": "float", "default": 100},
+    {"name": "currentHealth", "type": "float", "default": 100}
   ],
   "behaviors": [
     {
-      "name": "turn_on",
-      "trigger": "player enters detectionRadius",
+      "name": "update_healthbar",
+      "trigger": "execute logic every frame",
       "condition": null,
       "actions": [
-        {"type": "enable", "params": {"target": "Light"}}
+        {"action": "set the value of a slider", "target": "healthSlider", "value": "health ratio"}
       ]
     },
     {
-      "name": "turn_off",
-      "trigger": "player exits detectionRadius",
+      "name": "take_damage",
+      "trigger": "respond to damage event",
       "condition": null,
       "actions": [
-        {"type": "disable", "params": {"target": "Light"}}
+        {"action": "reduce a field value", "target": "currentHealth", "amount": "damage amount"}
       ]
     }
   ]
@@ -238,7 +255,9 @@ def extract_json_from_response(response: str) -> Tuple[Optional[str], Optional[D
     if HAS_JSON_REPAIR:
         try:
             repaired = repair_json(json_str, return_objects=False)
-            return repaired, json.loads(repaired)
+            parsed = json.loads(repaired)
+            # Re-serialize with pretty formatting
+            return json.dumps(parsed, indent=2), parsed
         except Exception:
             pass
     
@@ -450,6 +469,12 @@ class UnityIRGenerator:
             if new_json is None:
                 continue
             
+            # Validate structure: must be a dict, not a list
+            if not isinstance(new_parsed, dict):
+                if self.verbose:
+                    print(f"    Result: Invalid structure (got {type(new_parsed).__name__}, expected dict)")
+                continue
+            
             # Re-detect
             new_detection = self.steering.detect_unified(
                 text=new_json,
@@ -499,24 +524,24 @@ class UnityIRGenerator:
         if detection.baseline_violations:
             issues.append(f"Baseline deviations: {', '.join(detection.baseline_violations[:3])}")
         
-        system_prompt = """You fix Unity IR JSON by converting ALL code syntax to natural language.
+        system_prompt = """You fix Unity IR JSON by converting code syntax to natural language.
+
+KEEP THESE KEYS: class_name, components, fields, behaviors
+EACH FIELD HAS: name, type, default
+EACH BEHAVIOR HAS: name, trigger, condition, actions
 
 RULES:
-- NO math operators - describe operations in words
-- NO API names (Transform, Vector3, Time.deltaTime, etc.) - describe what they represent
-- NO function calls - describe the action
-- NO type annotations (float, int) - use plain descriptions
+- Keep the same JSON structure and keys
+- Replace code/operators with natural language descriptions
+- NO API names, NO operators, NO function calls
 
-Output ONLY valid JSON with code replaced by natural descriptions."""
+Output ONLY the corrected JSON."""
         
-        user_prompt = f"""Fix this Unity IR JSON - replace ALL code with natural language:
+        user_prompt = f"""Fix this JSON - convert code to natural language, keep same keys:
 
 {json_str}
 
-PROBLEMS:
-{chr(10).join(f'- {issue}' for issue in issues)}
-
-Rewrite with natural language descriptions:"""
+FIX: {', '.join(issues) if issues else 'code-like patterns detected'}"""
         
         return system_prompt, user_prompt
     

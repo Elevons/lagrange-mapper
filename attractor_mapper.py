@@ -318,18 +318,35 @@ def detect_code_markers(json_response: str) -> List[Dict]:
     Detect code leak patterns in Unity IR JSON response.
     
     Returns list of detected markers with category and pattern.
+    Excludes operators that are inside structured IR fields like "operator": "<=".
     """
     markers = []
+    
+    # Pattern to detect structured IR operators (these are NOT code leaks)
+    # Matches: "operator": "<=", "operator": ">=", "compare": "...", etc.
+    structured_field_pattern = re.compile(r'"(operator|compare|condition)"\s*:\s*"([^"]*)"')
+    structured_ranges = []
+    for match in structured_field_pattern.finditer(json_response):
+        # Store the range of the value (group 2)
+        structured_ranges.append((match.start(2), match.end(2)))
     
     for category, patterns in CODE_LEAK_PATTERNS.items():
         for pattern in patterns:
             matches = re.finditer(pattern, json_response, re.IGNORECASE)
             for match in matches:
-                markers.append({
-                    "category": category,
-                    "pattern": match.group(),
-                    "position": match.start(),
-                })
+                # Skip if this match is inside a structured IR field
+                is_structured = False
+                for start, end in structured_ranges:
+                    if start <= match.start() <= end:
+                        is_structured = True
+                        break
+                
+                if not is_structured:
+                    markers.append({
+                        "category": category,
+                        "pattern": match.group(),
+                        "position": match.start(),
+                    })
     
     return markers
 

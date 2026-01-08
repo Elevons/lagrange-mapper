@@ -1,0 +1,49 @@
+# Unity IR → C# Fine-tuning Requirements
+# ==========================================
+#
+# Default model: allenai/OLMo-3-7B-Instruct (OLMo 3)
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# For CUDA 11.8:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu118
+#
+# For CUDA 12.1+:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# Core ML
+torch>=2.1.0
+transformers>=4.45.0  # Updated for OLMo support
+datasets>=2.16.0
+accelerate>=0.25.0
+sentencepiece>=0.1.99  # Required for OLMo tokenizer
+
+# OLMo model support (required for allenai/OLMo-* models)
+ai2-olmo
+
+# LoRA / PEFT (Parameter-Efficient Fine-Tuning)
+peft>=0.7.0
+
+# Quantization (4-bit training)
+bitsandbytes>=0.41.0
+
+# Optional: Unsloth (faster but may not support OLMo 3)
+# For OLMo 3, use train_peft.py instead of train_unsloth.py
+# See: https://github.com/unslothai/unsloth
+# unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
+
+# Optional: TRL for SFTTrainer
+# trl>=0.7.0
+
+# Optional: Efficient attention (Linux recommended)
+# xformers
+
+# Optional: Weights & Biases for tracking
+# wandb
+
+# Data generation (if using Claude)
+aiohttp>=3.9.0
+python-dotenv>=1.0.0
+
+

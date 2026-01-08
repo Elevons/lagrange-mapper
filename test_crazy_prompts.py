@@ -1,21 +1,27 @@
 """
 Quick script to test crazy prompts from crazy_test_prompts.txt
-Tests all prompts and grades oneshot vs IR versions using Claude Haiku
+Tests all prompts and grades oneshot vs IR (monolithic) vs IR (per-behavior) using Claude Haiku
 """
 
 import sys
+import os
 import json
 import time
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
+from dotenv import load_dotenv
 from unity_pipeline_simple import UnityPipelineSimple
+from unity_pipeline_per_behavior import UnityPipelinePerBehavior
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ============================================================================
-# CONFIGURATION - SET YOUR API KEY HERE
+# CONFIGURATION - API KEY LOADED FROM .env FILE
 # ============================================================================
-ANTHROPIC_API_KEY = ""  # Set your Anthropic API key here, e.g. "sk-ant-..."
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = "claude-3-5-haiku-20241022"
 
@@ -66,72 +72,126 @@ def load_prompts(filename="crazy_test_prompts.txt"):
     
     return prompts
 
-def grade_with_claude(prompt: str, oneshot_code: Optional[str], ir_code: Optional[str], ir_json: Optional[Dict]) -> Optional[Dict]:
+def grade_with_claude(prompt: str, oneshot_code: Optional[str], ir_code: Optional[str], ir_json: Optional[Dict], 
+                       per_behavior_code: Optional[str] = None, per_behavior_docs: int = 0) -> Optional[Dict]:
     """
-    Send both code versions to Claude Haiku for grading.
+    Send all code versions to Claude Haiku for grading.
     
     Returns a dict with scores and feedback, or None if grading fails.
     """
     if not ANTHROPIC_API_KEY:
-        print("⚠️  Warning: ANTHROPIC_API_KEY not set, skipping Claude grading")
+        print("[WARN]  Warning: ANTHROPIC_API_KEY not set, skipping Claude grading")
         return None
     
-    grading_prompt = f"""You are evaluating two Unity C# code generation approaches for the same user request.
+    # Build grading prompt based on which approaches we have
+    has_per_behavior = per_behavior_code is not None
+    
+    grading_prompt = f"""You are evaluating {"three" if has_per_behavior else "two"} Unity C# code generation approaches for the same user request.
 
 USER REQUEST:
 {prompt}
 
-APPROACH 1 - ONESHOT (Direct NL → C#):
+APPROACH 1 - ONESHOT (Direct NL -> C#, no RAG):
 ```csharp
-{oneshot_code[:4000] if oneshot_code else "[FAILED TO GENERATE]"}
+{oneshot_code[:3500] if oneshot_code else "[FAILED TO GENERATE]"}
 ```
 
-APPROACH 2 - IR PIPELINE (NL → IR → C#):
+APPROACH 2 - IR MONOLITHIC (NL -> IR -> RAG (8 docs) -> C#):
 Intermediate Representation (IR):
-{json.dumps(ir_json, indent=2) if ir_json else "[NO IR]"}
+{json.dumps(ir_json, indent=2)[:1000] if ir_json else "[NO IR]"}
 
 Generated C# Code:
 ```csharp
-{ir_code[:4000] if ir_code else "[FAILED TO GENERATE]"}
-```
+{ir_code[:3500] if ir_code else "[FAILED TO GENERATE]"}
+```"""
 
-EVALUATION CRITERIA:
-1. Correctness: Does the code correctly implement the requested behavior?
-2. Unity API Usage: Are Unity APIs used correctly and appropriately?
-3. Code Quality: Is the code well-structured, readable, and maintainable?
-4. Completeness: Does it handle all aspects of the request?
-5. Best Practices: Does it follow Unity and C# best practices?
+    if has_per_behavior:
+        grading_prompt += f"""
+
+APPROACH 3 - IR PER-BEHAVIOR (NL -> IR -> RAG per behavior ({per_behavior_docs} docs total) -> C#):
+This approach retrieves separate documentation for each behavior block, then generates methods individually.
+```csharp
+{per_behavior_code[:3500] if per_behavior_code else "[FAILED TO GENERATE]"}
+```"""
+
+    grading_prompt += f"""
+
+EVALUATION CRITERIA (weighted by importance):
+
+1. Architecture & Structure (MOST IMPORTANT - 3x weight):
+   - Is the code organized with clear separation of concerns?
+   - Are there proper methods/functions for distinct behaviors?
+   - Could a developer easily understand and extend this code?
+   - Is it modular rather than monolithic?
+
+2. Fixability & Maintainability (2x weight):
+   - If something is wrong, how easy would it be to fix?
+   - Are there clear extension points for missing features?
+   - Is the code defensive without being over-engineered?
+   - Would TODO comments or stub methods be easy to fill in?
+
+3. Unity Patterns (1.5x weight):
+   - Does it use appropriate Unity lifecycle methods?
+   - Are serialized fields used correctly for inspector configuration?
+   - Does it follow Unity component patterns?
+
+4. Correctness (1x weight):
+   - Does the implemented portion work correctly?
+   - Note: Partial but correct is BETTER than complete but broken
+
+5. Completeness (0.5x weight - LEAST IMPORTANT):
+   - How much of the request is addressed?
+   - Note: DO NOT reward code that tries everything but is messy
+   - Clean incomplete code beats messy complete code
+
+PHILOSOPHY: We want code that a junior developer could pick up, understand, and finish implementing. Spaghetti code that "works" is worse than clean code with TODOs.
 
 For each approach, provide:
-- A score from 1-10 for each criterion
-- Brief justification for each score
-- Overall winner (oneshot or IR)
-- Key differences and advantages of the winning approach
+- A score from 1-10 for each criterion (before weighting)
+- The weighted total will be: (architecture*3) + (fixability*2) + (unity_patterns*1.5) + (correctness*1) + (completeness*0.5)
+- Max possible weighted score: 80
 
 Format your response as JSON:
 {{
   "oneshot": {{
+    "architecture": <score>,
+    "fixability": <score>,
+    "unity_patterns": <score>,
     "correctness": <score>,
-    "api_usage": <score>,
-    "code_quality": <score>,
     "completeness": <score>,
-    "best_practices": <score>,
-    "total": <sum>,
+    "weighted_total": <calculated>,
     "justification": "<brief explanation>"
   }},
-  "ir": {{
+  "ir_monolithic": {{
+    "architecture": <score>,
+    "fixability": <score>,
+    "unity_patterns": <score>,
     "correctness": <score>,
-    "api_usage": <score>,
-    "code_quality": <score>,
     "completeness": <score>,
-    "best_practices": <score>,
-    "total": <sum>,
+    "weighted_total": <calculated>,
     "justification": "<brief explanation>"
-  }},
-  "winner": "oneshot" | "ir" | "tie",
+  }},"""
+    
+    if has_per_behavior:
+        grading_prompt += """
+  "ir_per_behavior": {
+    "architecture": <score>,
+    "fixability": <score>,
+    "unity_patterns": <score>,
+    "correctness": <score>,
+    "completeness": <score>,
+    "weighted_total": <calculated>,
+    "justification": "<brief explanation>"
+  },
+  "winner": "oneshot" | "ir_monolithic" | "ir_per_behavior","""
+    else:
+        grading_prompt += """
+  "winner": "oneshot" | "ir_monolithic","""
+    
+    grading_prompt += """
   "key_differences": "<explanation of main differences>",
   "advantages": "<what makes the winner better>"
-}}"""
+}"""
 
     try:
         response = requests.post(
@@ -155,7 +215,7 @@ Format your response as JSON:
         )
         
         if response.status_code != 200:
-            print(f"⚠️  Claude API error: {response.status_code} - {response.text}")
+            print(f"[WARN]  Claude API error: {response.status_code} - {response.text}")
             return None
         
         content = response.json()["content"][0]["text"]
@@ -175,11 +235,11 @@ Format your response as JSON:
             return {"raw_response": content}
             
     except Exception as e:
-        print(f"⚠️  Error calling Claude API: {e}")
+        print(f"[WARN]  Error calling Claude API: {e}")
         return None
 
 def test_prompt(prompt_num: int, prompt: str, verbose: bool = True, compare: bool = False, grade: bool = False):
-    """Test a single prompt"""
+    """Test a single prompt with all three approaches"""
     print(f"\n{'='*80}")
     print(f"TESTING PROMPT #{prompt_num}")
     print(f"{'='*80}")
@@ -187,6 +247,7 @@ def test_prompt(prompt_num: int, prompt: str, verbose: bool = True, compare: boo
     print(f"{'='*80}\n")
     
     pipeline = UnityPipelineSimple(verbose=verbose)
+    per_behavior_pipeline = UnityPipelinePerBehavior(verbose=verbose)
     
     result_data = {
         "prompt_num": prompt_num,
@@ -197,34 +258,68 @@ def test_prompt(prompt_num: int, prompt: str, verbose: bool = True, compare: boo
         "ir_code": None,
         "ir_steered": False,
         "ir_rag_docs": 0,
+        "ir_rag_doc_names": None,
+        "per_behavior_code": None,
+        "per_behavior_docs": 0,
+        "per_behavior_methods": 0,
+        "per_behavior_doc_names": None,
         "grade": None,
         "error": None
     }
     
     if compare or grade:
-        # Generate both versions for comparison
+        # Generate oneshot and IR monolithic versions
         result = pipeline.compare(prompt)
         result_data["oneshot_code"] = result.oneshot_code
         result_data["ir_json"] = result.ir_json
         result_data["ir_code"] = result.ir_code
         result_data["ir_steered"] = result.ir_steered
         result_data["ir_rag_docs"] = result.ir_rag_docs
+        result_data["ir_rag_doc_names"] = result.ir_rag_doc_names
+        
+        # Generate per-behavior version
+        print(f"\n{'-'*80}")
+        print("GENERATING PER-BEHAVIOR VERSION...")
+        print(f"{'-'*80}")
+        try:
+            pb_result = per_behavior_pipeline.generate(prompt)
+            if pb_result.success:
+                result_data["per_behavior_code"] = pb_result.code
+                result_data["per_behavior_docs"] = pb_result.total_docs_retrieved
+                result_data["per_behavior_methods"] = pb_result.behaviors_generated
+                result_data["per_behavior_doc_names"] = pb_result.rag_doc_names_by_behavior
+                print(f"   Per-behavior: {pb_result.total_docs_retrieved} docs, {pb_result.behaviors_generated} methods")
+            else:
+                print(f"   Per-behavior: FAILED - {pb_result.error}")
+        except Exception as e:
+            print(f"   Per-behavior: ERROR - {e}")
         
         # Grade with Claude if requested
         if grade and result.oneshot_code and result.ir_code:
-            print(f"\n{'─'*80}")
+            print(f"\n{'-'*80}")
             print("GRADING WITH CLAUDE HAIKU...")
-            print(f"{'─'*80}")
-            grade_result = grade_with_claude(prompt, result.oneshot_code, result.ir_code, result.ir_json)
+            print(f"{'-'*80}")
+            grade_result = grade_with_claude(
+                prompt, 
+                result.oneshot_code, 
+                result.ir_code, 
+                result.ir_json,
+                result_data.get("per_behavior_code"),
+                result_data.get("per_behavior_docs", 0)
+            )
             result_data["grade"] = grade_result
             
             if grade_result and "winner" in grade_result:
                 print(f"\n🏆 WINNER: {grade_result['winner'].upper()}")
-                if "oneshot" in grade_result and "ir" in grade_result:
-                    oneshot_total = grade_result["oneshot"].get("total", 0)
-                    ir_total = grade_result["ir"].get("total", 0)
-                    print(f"   Oneshot Score: {oneshot_total}/50")
-                    print(f"   IR Score: {ir_total}/50")
+                
+                # Show scores for all approaches
+                for approach in ["oneshot", "ir_monolithic", "ir_per_behavior"]:
+                    if approach in grade_result and isinstance(grade_result[approach], dict):
+                        total = grade_result[approach].get("weighted_total", 0)
+                        arch = grade_result[approach].get("architecture", "?")
+                        fix = grade_result[approach].get("fixability", "?")
+                        print(f"   {approach}: {total}/80 (arch={arch}, fix={fix})")
+                
                 if "key_differences" in grade_result:
                     print(f"\n📊 Key Differences:")
                     print(f"   {grade_result['key_differences']}")
@@ -239,18 +334,18 @@ def test_prompt(prompt_num: int, prompt: str, verbose: bool = True, compare: boo
             result_data["ir_rag_docs"] = result.rag_docs_used
             
             if verbose:
-                print(f"\n{'─'*80}")
+                print(f"\n{'-'*80}")
                 print("IR JSON:")
-                print(f"{'─'*80}")
+                print(f"{'-'*80}")
                 print(json.dumps(result.ir_json, indent=2))
                 
-                print(f"\n{'─'*80}")
+                print(f"\n{'-'*80}")
                 print(f"C# CODE: (steered={result.was_steered}, rag_docs={result.rag_docs_used})")
-                print(f"{'─'*80}")
+                print(f"{'-'*80}")
                 print(result.code)
         else:
             result_data["error"] = result.error
-            print(f"❌ ERROR: {result.error}")
+            print(f"[X] ERROR: {result.error}")
     
     return result_data
 
@@ -267,49 +362,104 @@ def save_results(results: List[Dict], filename: Optional[str] = None):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
-    print(f"\n💾 Results saved to: {filepath}")
+    print(f"\n[SAVED] Results saved to: {filepath}")
     return filepath
 
 def print_summary(results: List[Dict]):
-    """Print summary statistics"""
+    """Print summary statistics for all three approaches"""
     print(f"\n{'='*80}")
     print("SUMMARY STATISTICS")
     print(f"{'='*80}")
     
     total = len(results)
     successful = sum(1 for r in results if r.get("ir_code") or r.get("oneshot_code"))
+    per_behavior_success = sum(1 for r in results if r.get("per_behavior_code"))
     graded = sum(1 for r in results if r.get("grade") and "winner" in r["grade"])
     
     print(f"Total Prompts: {total}")
-    print(f"Successful: {successful}")
+    print(f"Successful (oneshot/mono): {successful}")
+    print(f"Successful (per-behavior): {per_behavior_success}")
     print(f"Graded: {graded}")
     
     if graded > 0:
-        oneshot_wins = sum(1 for r in results if r.get("grade", {}).get("winner") == "oneshot")
-        ir_wins = sum(1 for r in results if r.get("grade", {}).get("winner") == "ir")
-        ties = sum(1 for r in results if r.get("grade", {}).get("winner") == "tie")
+        # Safely get winner - handle None grade values
+        def get_winner(r):
+            grade = r.get("grade")
+            if grade is None:
+                return None
+            return grade.get("winner")
+        
+        oneshot_wins = sum(1 for r in results if get_winner(r) == "oneshot")
+        ir_mono_wins = sum(1 for r in results if get_winner(r) in ["ir", "ir_monolithic"])
+        ir_pb_wins = sum(1 for r in results if get_winner(r) == "ir_per_behavior")
+        ties = sum(1 for r in results if get_winner(r) == "tie")
         
         print(f"\n🏆 Winners:")
-        print(f"   Oneshot: {oneshot_wins}")
-        print(f"   IR Pipeline: {ir_wins}")
-        print(f"   Ties: {ties}")
+        print(f"   Oneshot:           {oneshot_wins}")
+        print(f"   IR Monolithic:     {ir_mono_wins}")
+        print(f"   IR Per-Behavior:   {ir_pb_wins}")
+        print(f"   Ties:              {ties}")
         
-        # Calculate average scores
-        oneshot_scores = [r["grade"]["oneshot"]["total"] for r in results 
-                         if r.get("grade") and "oneshot" in r["grade"] and "total" in r["grade"]["oneshot"]]
-        ir_scores = [r["grade"]["ir"]["total"] for r in results 
-                    if r.get("grade") and "ir" in r["grade"] and "total" in r["grade"]["ir"]]
+        # Helper to extract scores for an approach
+        def get_scores(approach_key, field):
+            scores = []
+            for r in results:
+                grade = r.get("grade")
+                if grade is None:
+                    continue
+                # Handle both old "ir" and new "ir_monolithic" keys
+                if approach_key == "ir_monolithic" and "ir" in grade and approach_key not in grade:
+                    approach = grade.get("ir")
+                else:
+                    approach = grade.get(approach_key)
+                # Ensure approach is a dict before accessing fields
+                if isinstance(approach, dict) and field in approach:
+                    scores.append(approach[field])
+            return scores
         
-        if oneshot_scores:
-            print(f"\n📊 Average Scores:")
-            print(f"   Oneshot: {sum(oneshot_scores)/len(oneshot_scores):.1f}/50")
-        if ir_scores:
-            print(f"   IR Pipeline: {sum(ir_scores)/len(ir_scores):.1f}/50")
+        # Calculate average scores for all approaches
+        approaches = [
+            ("Oneshot", "oneshot"),
+            ("IR Monolithic", "ir_monolithic"),
+            ("IR Per-Behavior", "ir_per_behavior")
+        ]
+        
+        print(f"\n📊 Average Weighted Scores (max 80):")
+        for name, key in approaches:
+            scores = get_scores(key, "weighted_total")
+            if scores:
+                print(f"   {name:18}: {sum(scores)/len(scores):.1f}/80")
+        
+        print(f"\n🏗️  Average Architecture Scores (3x weight):")
+        for name, key in approaches:
+            scores = get_scores(key, "architecture")
+            if scores:
+                print(f"   {name:18}: {sum(scores)/len(scores):.1f}/10")
+        
+        print(f"\n🔧 Average Fixability Scores (2x weight):")
+        for name, key in approaches:
+            scores = get_scores(key, "fixability")
+            if scores:
+                print(f"   {name:18}: {sum(scores)/len(scores):.1f}/10")
+        
+        # RAG docs comparison
+        mono_docs = [r.get("ir_rag_docs", 0) for r in results if r.get("ir_rag_docs")]
+        pb_docs = [r.get("per_behavior_docs", 0) for r in results if r.get("per_behavior_docs")]
+        
+        if mono_docs or pb_docs:
+            print(f"\n📚 Average RAG Docs Retrieved:")
+            if mono_docs:
+                print(f"   IR Monolithic:     {sum(mono_docs)/len(mono_docs):.1f} docs")
+            if pb_docs:
+                print(f"   IR Per-Behavior:   {sum(pb_docs)/len(pb_docs):.1f} docs")
+                if mono_docs:
+                    ratio = (sum(pb_docs)/len(pb_docs)) / (sum(mono_docs)/len(mono_docs))
+                    print(f"   Coverage Increase: {ratio:.1f}x")
     
     # Count errors
     errors = [r for r in results if r.get("error")]
     if errors:
-        print(f"\n❌ Errors: {len(errors)}")
+        print(f"\n[X] Errors: {len(errors)}")
         for r in errors[:5]:  # Show first 5
             print(f"   Prompt {r['prompt_num']}: {r['error']}")
 
@@ -330,23 +480,23 @@ def main():
         print("  python test_crazy_prompts.py 1")
         print("  python test_crazy_prompts.py 5 --compare --grade")
         print("  python test_crazy_prompts.py --all --grade")
-        print("\n⚠️  Note: Set ANTHROPIC_API_KEY at the top of this script for grading")
+        print("\n[WARN]  Note: Set ANTHROPIC_API_KEY in .env file for grading")
         return
     
     # Check API key if grading
     if "--grade" in sys.argv and not ANTHROPIC_API_KEY:
-        print("⚠️  Warning: ANTHROPIC_API_KEY not set!")
-        print("   Set it at the top of test_crazy_prompts.py to enable grading")
+        print("[WARN]  Warning: ANTHROPIC_API_KEY not set!")
+        print("   Create a .env file with: ANTHROPIC_API_KEY=sk-ant-...")
         print("   Continuing without grading...\n")
     
     try:
         prompts = load_prompts()
         print(f"Loaded {len(prompts)} prompts from crazy_test_prompts.txt\n")
     except FileNotFoundError:
-        print("❌ Error: crazy_test_prompts.txt not found!")
+        print("[X] Error: crazy_test_prompts.txt not found!")
         return
     except Exception as e:
-        print(f"❌ Error loading prompts: {e}")
+        print(f"[X] Error loading prompts: {e}")
         return
     
     if sys.argv[1] == "--list":
@@ -363,7 +513,7 @@ def main():
         
         print(f"Testing ALL {len(prompts)} prompts...")
         if grade:
-            print("⚠️  Grading enabled - this will make API calls to Claude Haiku")
+            print("[WARN]  Grading enabled - this will make API calls to Claude Haiku")
         print("Press Ctrl+C to stop\n")
         
         results = []
@@ -377,7 +527,7 @@ def main():
                 
                 # Save incrementally after each prompt
                 save_results(results, "test_results_in_progress.json")
-                print(f"💾 Progress saved ({i}/{len(prompts)} prompts completed)")
+                print(f"[SAVED] Progress saved ({i}/{len(prompts)} prompts completed)")
                 
                 # Small delay to avoid rate limits
                 if grade and i < len(prompts):
@@ -389,10 +539,10 @@ def main():
                 if results:
                     partial_filename = f"test_results_partial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                     save_results(results, partial_filename)
-                    print(f"💾 Partial results saved to: {partial_filename}")
+                    print(f"[SAVED] Partial results saved to: {partial_filename}")
                 break
             except Exception as e:
-                print(f"\n❌ Error testing prompt {i}: {e}\n")
+                print(f"\n[X] Error testing prompt {i}: {e}\n")
                 results.append({
                     "prompt_num": i,
                     "prompt": prompt,
@@ -405,14 +555,14 @@ def main():
         
         elapsed = time.time() - start_time
         print(f"\n{'='*80}")
-        print(f"✅ Completed {len(results)} prompts in {elapsed:.1f} seconds")
+        print(f"[OK] Completed {len(results)} prompts in {elapsed:.1f} seconds")
         print(f"{'='*80}")
         
         # Save final results with timestamp
         final_file = save_results(results)
         
         # Keep in_progress file as backup, but also create final timestamped version
-        print(f"💾 Final results saved (in_progress file also available as backup)")
+        print(f"[SAVED] Final results saved (in_progress file also available as backup)")
         
         # Print summary
         print_summary(results)
@@ -423,7 +573,7 @@ def main():
     try:
         prompt_num = int(sys.argv[1])
         if prompt_num < 1 or prompt_num > len(prompts):
-            print(f"❌ Error: Prompt number must be between 1 and {len(prompts)}")
+            print(f"[X] Error: Prompt number must be between 1 and {len(prompts)}")
             return
         
         compare = "--compare" in sys.argv or "--grade" in sys.argv
@@ -437,10 +587,10 @@ def main():
         save_results([result_data], f"prompt_{prompt_num}_result.json")
         
     except ValueError:
-        print(f"❌ Error: '{sys.argv[1]}' is not a valid prompt number")
+        print(f"[X] Error: '{sys.argv[1]}' is not a valid prompt number")
         print("Use --list to see available prompts")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[X] Error: {e}")
 
 if __name__ == "__main__":
     main()

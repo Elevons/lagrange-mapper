@@ -1,10 +1,10 @@
 """
-Unity Pipeline Simple - Streamlined NL → IR → C# Generation
+Unity Pipeline Simple - Streamlined NL -> IR -> C# Generation
 
 Simplified flow:
-1. User prompt → IR JSON
-2. IR JSON → RAG retrieval  
-3. RAG context + IR → C# code generation
+1. User prompt -> IR JSON
+2. IR JSON -> RAG retrieval  
+3. RAG context + IR -> C# code generation
 4. RAG-based steering (if needed)
 5. Output code
 
@@ -14,7 +14,7 @@ No attractor detection, no calibration, just clean generation with RAG support.
 import json
 import requests
 import sys
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from unity_ir_inference import extract_json_from_response
 
@@ -30,23 +30,7 @@ DEFAULT_TEMPERATURE = 0.4
 # PROMPTS
 # ============================================================================
 
-IR_SYSTEM_PROMPT = """You are a Unity behavior specification generator. Output structured JSON only.
-
-STRUCTURE:
-{
-  "class_name": "BehaviorName",
-  "components": ["Rigidbody", "AudioSource", ...],
-  "fields": [{"name": "speed", "type": "float", "default": 5.0}],
-  "behaviors": [{"name": "...", "trigger": "...", "actions": [...]}]
-}
-
-RULES:
-1. Components must be exact Unity class names: Rigidbody, AudioSource, Collider, Animator, Text, Image, Canvas, RectTransform
-2. Field types must be C# types: float, int, bool, string, Vector3, AudioClip, GameObject, Transform
-3. Default values must be actual values: 10, null, true, 0.5 (not descriptions)
-4. Actions are verb phrases: "play audio", "apply force", "destroy object"
-
-Output ONLY valid JSON. No markdown, no explanations."""
+IR_SYSTEM_PROMPT = """You are a helpful assistant. Output only valid JSON."""
 
 CODE_SYSTEM_PROMPT = """You are a Unity C# code generator. Convert the behavior specification into a complete MonoBehaviour script.
 
@@ -56,6 +40,8 @@ REQUIREMENTS:
 3. Declare all fields as public or [SerializeField]
 4. Add required using statements
 5. Make the code production-ready and compilable
+6. SELF-CONTAINED: Do NOT reference classes that aren't defined in this script or Unity's standard API
+7. If you need a helper class, DEFINE IT in the same file
 
 Output ONLY the C# code. No markdown, no explanations."""
 
@@ -102,6 +88,7 @@ class PipelineResult:
     error: Optional[str] = None
     was_steered: bool = False
     rag_docs_used: int = 0
+    rag_doc_names: Optional[List[str]] = None  # List of "APIName (score)" strings
 
 
 @dataclass
@@ -113,6 +100,7 @@ class CompareResult:
     ir_code: Optional[str] = None
     ir_steered: bool = False
     ir_rag_docs: int = 0
+    ir_rag_doc_names: Optional[List[str]] = None  # List of "APIName (score)" strings
 
 
 # ============================================================================
@@ -123,7 +111,7 @@ class UnityPipelineSimple:
     """
     Simplified Unity code generation pipeline.
     
-    Flow: Prompt → IR JSON → RAG → C# Code → (optional steering) → Output
+    Flow: Prompt -> IR JSON -> RAG -> C# Code -> (optional steering) -> Output
     """
     
     def __init__(self, 
@@ -169,14 +157,15 @@ class UnityPipelineSimple:
             return PipelineResult(success=False, error="Failed to generate IR JSON")
         
         if self.verbose:
-            print(f"  → Class: {ir_json.get('class_name')}")
-            print(f"  → Components: {ir_json.get('components', [])}")
-            print(f"  → Fields: {len(ir_json.get('fields', []))}")
-            print(f"  → Behaviors: {len(ir_json.get('behaviors', []))}")
+            print(f"  -> Class: {ir_json.get('class_name')}")
+            print(f"  -> Components: {ir_json.get('components', [])}")
+            print(f"  -> Fields: {len(ir_json.get('fields', []))}")
+            print(f"  -> Behaviors: {len(ir_json.get('behaviors', []))}")
         
         # Step 2: RAG retrieval based on IR
         rag_context = ""
         rag_docs_used = 0
+        rag_doc_names = []
         
         if self.rag:
             if self.verbose:
@@ -191,13 +180,14 @@ class UnityPipelineSimple:
             
             if rag_result.documents:
                 rag_docs_used = len(rag_result.documents)
+                rag_doc_names = [f"{doc.api_name} ({doc.score:.2f})" for doc in rag_result.documents]
                 rag_context = self.rag.format_context_for_prompt(
                     rag_result.documents, 
                     max_tokens=2500
                 )
                 
                 if self.verbose:
-                    print(f"  → Retrieved {rag_docs_used} docs from {len(rag_result.selected_namespaces)} namespaces")
+                    print(f"  -> Retrieved {rag_docs_used} docs from {len(rag_result.selected_namespaces)} namespaces")
                     for doc in rag_result.documents[:3]:
                         print(f"     - {doc.api_name} ({doc.score:.2f})")
         else:
@@ -217,13 +207,13 @@ class UnityPipelineSimple:
             )
         
         if self.verbose:
-            print(f"  → Generated {len(code)} chars")
+            print(f"  -> Generated {len(code)} chars")
         
         # Step 3.5: Verify IR fields are in generated code
         missing_fields = self._verify_ir_fields_in_code(code, ir_json)
         if missing_fields:
             if self.verbose:
-                print(f"  → {len(missing_fields)} IR fields missing, injecting...")
+                print(f"  -> {len(missing_fields)} IR fields missing, injecting...")
             code = self._inject_missing_fields(code, missing_fields)
             if self.verbose:
                 for f in missing_fields:
@@ -243,17 +233,17 @@ class UnityPipelineSimple:
             chain_suspicious = self._validate_property_chains(code, ir_json)
             if chain_suspicious:
                 if self.verbose:
-                    print(f"  → Chain validation found {len(chain_suspicious)} issues")
+                    print(f"  -> Chain validation found {len(chain_suspicious)} issues")
                 suspicious.extend(chain_suspicious)
             
             if suspicious:
                 if self.verbose:
-                    print(f"  → {len(suspicious)} suspicious APIs found:")
+                    print(f"  -> {len(suspicious)} suspicious APIs found:")
                     for s in suspicious[:5]:
                         if s["nearest"]:
-                            print(f"     ⚠ {s['api']} → nearest: {s['nearest']} ({s['score']:.2f})")
+                            print(f"     [!] {s['api']} -> nearest: {s['nearest']} ({s['score']:.2f})")
                         else:
-                            print(f"     ⚠ {s['api']} → not found in Unity docs")
+                            print(f"     [!] {s['api']} -> not found in Unity docs")
                 
                 # Get RAG docs for the suspicious APIs to help with steering
                 steering_result = self.rag.retrieve_for_code_steering(code, threshold=0.5)
@@ -270,10 +260,10 @@ class UnityPipelineSimple:
                         code = steered_code
                         was_steered = True
                         if self.verbose:
-                            print(f"  → Steering applied (fixing {len(suspicious)} APIs)")
+                            print(f"  -> Steering applied (fixing {len(suspicious)} APIs)")
             else:
                 if self.verbose:
-                    print(f"  → All APIs validated ✓")
+                    print(f"  -> All APIs validated [OK]")
         else:
             if self.verbose:
                 print("\n[4/4] Validation skipped")
@@ -288,19 +278,35 @@ class UnityPipelineSimple:
             ir_json=ir_json,
             code=code,
             was_steered=was_steered,
-            rag_docs_used=rag_docs_used
+            rag_docs_used=rag_docs_used,
+            rag_doc_names=rag_doc_names
         )
     
     def _generate_ir(self, prompt: str) -> Optional[Dict]:
         """Generate IR JSON from prompt"""
         try:
+            # Build user message with embedded schema (model responds better to this)
+            user_content = f"""Describe this Unity behavior as JSON with class_name, components, fields, and behaviors.
+
+Request: {prompt}
+
+Output format:
+{{
+  "class_name": "BehaviorName",
+  "components": ["Rigidbody", "AudioSource"],
+  "fields": [{{"name": "speed", "type": "float", "default": 5.0}}],
+  "behaviors": [{{"name": "movement", "trigger": "when key pressed", "actions": [{{"action": "move forward"}}]}}]
+}}
+
+JSON:"""
+            
             response = requests.post(
                 self.llm_url,
                 json={
                     "model": "local-model",
                     "messages": [
                         {"role": "system", "content": IR_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt}
+                        {"role": "user", "content": user_content}
                     ],
                     "temperature": DEFAULT_TEMPERATURE,
                     "max_tokens": 2000
@@ -309,17 +315,39 @@ class UnityPipelineSimple:
             )
             
             if response.status_code != 200:
+                if self.verbose:
+                    print(f"  IR error: HTTP {response.status_code}")
+                    print(f"  Response: {response.text[:500]}")
                 return None
             
             content = response.json()["choices"][0]["message"]["content"]
             
+            # DEBUG: Print raw response if verbose
+            if self.verbose:
+                print(f"  Raw IR response ({len(content)} chars):")
+                print(f"  {content[:300]}...")
+            
             # Use robust JSON parsing (json-repair, json5, regex fallback)
             _, parsed = extract_json_from_response(content)
+            
+            # DEBUG: If parsing failed, show why
+            if parsed is None and self.verbose:
+                print(f"  [WARN] JSON parsing failed!")
+                print(f"  Full response:\n{content}")
+            
+            # Validate that parsed result is a dict, not a list
+            if parsed is not None and not isinstance(parsed, dict):
+                if self.verbose:
+                    print(f"  IR error: Expected dict, got {type(parsed).__name__}")
+                return None
+            
             return parsed
             
         except Exception as e:
             if self.verbose:
                 print(f"  IR generation error: {e}")
+                import traceback
+                traceback.print_exc()
             return None
     
     def _generate_code(self, ir_json: Dict, rag_context: str) -> Optional[str]:
@@ -366,9 +394,9 @@ class UnityPipelineSimple:
             if suspicious:
                 for s in suspicious:
                     if s["nearest"]:
-                        invalid_apis_text += f"- {s['api']} → Try using: {s['nearest']}\n"
+                        invalid_apis_text += f"- {s['api']} -> Try using: {s['nearest']}\n"
                     else:
-                        invalid_apis_text += f"- {s['api']} → Does not exist in Unity, remove or replace\n"
+                        invalid_apis_text += f"- {s['api']} -> Does not exist in Unity, remove or replace\n"
             else:
                 invalid_apis_text = "- General API issues detected\n"
             
@@ -401,17 +429,22 @@ class UnityPipelineSimple:
                 print(f"  Steering error: {e}")
             return None
     
-    def _validate_apis_against_rag(self, code: str, ir_json: Dict = None, threshold: float = 0.70) -> list:
+    def _validate_apis_against_rag(self, code: str, ir_json: Dict = None, threshold: float = 0.85) -> list:
         """
         Validate ALL method calls in code against RAG database.
         
-        Uses universal pattern matching (no hardcoded API lists) plus 
-        IR-driven type context for better accuracy.
+        Uses a two-tier approach:
+        1. EXACT MATCH: Check against API whitelist from RAG index (fast, reliable)
+        2. SEMANTIC FALLBACK: If not in whitelist, use embedding similarity (slower, catches variations)
+        
+        Also validates:
+        - Attributes: [AttributeName]
+        - Constructors: new ClassName(...)
         
         Args:
             code: Generated C# code
             ir_json: Optional IR JSON for type context
-            threshold: Minimum similarity score to consider valid
+            threshold: Minimum similarity score for semantic fallback (default 0.85)
             
         Returns:
             List of suspicious APIs that don't match known Unity APIs
@@ -427,21 +460,93 @@ class UnityPipelineSimple:
         # Get component types from IR for context
         ir_components = []
         if ir_json:
-            ir_components = ir_json.get("components", [])
+            raw_components = ir_json.get("components", [])
+            # Normalize: handle both string and dict formats
+            for c in raw_components:
+                if isinstance(c, str):
+                    ir_components.append(c)
+                elif isinstance(c, dict):
+                    # Extract from {"component_type": "Rigidbody"} or {"name": "Rigidbody"}
+                    comp_name = c.get("component_type") or c.get("name") or c.get("type", "")
+                    if comp_name:
+                        ir_components.append(comp_name)
+        
+        # Common properties/methods to skip (always valid on most Unity objects)
+        skip_members = {
+            'name', 'tag', 'gameObject', 'transform', 'enabled', 'position', 
+            'rotation', 'localPosition', 'localRotation', 'localScale', 'parent',
+            'GetComponent', 'GetComponents', 'GetComponentInChildren', 'GetComponentsInChildren',
+            'AddComponent', 'Destroy', 'Instantiate', 'DontDestroyOnLoad',
+        }
+        
+        # Common C# types to skip entirely
+        skip_classes = {
+            'System', 'List', 'Dictionary', 'Math', 'String', 'Array', 'Console', 
+            'IEnumerator', 'IEnumerable', 'Action', 'Func', 'Task', 'File', 'Path',
+            'Exception', 'Type', 'Object', 'Convert', 'Int32', 'Float', 'Boolean',
+            'StringBuilder', 'Regex', 'Match', 'Group', 'Collections',
+        }
+        
+        # Common C# methods to skip
+        skip_methods = {'Length', 'Count', 'ToString', 'GetType', 'Equals', 'GetHashCode', 'CompareTo'}
+        
+        def check_api(api: str) -> dict:
+            """Check a single API against whitelist, then semantic fallback."""
+            # TIER 1: Exact match against whitelist
+            if hasattr(self.rag, 'is_valid_api') and self.rag.is_valid_api(api):
+                return None  # Valid, no issue
+            
+            # TIER 2: Semantic search fallback
+            results = self.rag.search(query=api, top_k=1, threshold=0.0)
+            if results:
+                if results[0].score >= threshold:
+                    return None  # Close enough match
+                else:
+                    return {
+                        "api": api,
+                        "nearest": results[0].api_name,
+                        "score": results[0].score
+                    }
+            else:
+                return {"api": api, "nearest": None, "score": 0.0}
+        
+        # =====================================================================
+        # PATTERN 0: Validate attributes [AttributeName]
+        # =====================================================================
+        attr_pattern = r'\[(\w+)(?:\([^\)]*\))?\]'
+        for match in re.finditer(attr_pattern, code):
+            attr_name = match.group(1)
+            
+            if attr_name in checked:
+                continue
+            checked.add(attr_name)
+            
+            # Check if valid attribute
+            if hasattr(self.rag, 'is_valid_attribute') and self.rag.is_valid_attribute(attr_name):
+                continue
+            
+            # Also check whitelist for the attribute class itself
+            if hasattr(self.rag, 'is_valid_api'):
+                if self.rag.is_valid_api(attr_name) or self.rag.is_valid_api(f"{attr_name}Attribute"):
+                    continue
+            
+            suspicious.append({
+                "api": f"[{attr_name}]",
+                "nearest": None,
+                "score": 0.0,
+                "type": "attribute"
+            })
         
         # =====================================================================
         # PATTERN 1: Type.Method calls using IR components
         # e.g., animator.SetState -> check "Animator.SetState"
         # =====================================================================
         for component in ir_components:
-            # Find variables that might be this component type
-            # Matches: animator, _animator, myAnimator, etc.
             var_pattern = rf'\b(\w*{re.escape(component.lower())}\w*)\s*\.\s*(\w+)'
             
             for match in re.finditer(var_pattern, code, re.IGNORECASE):
                 method = match.group(2)
-                # Skip common non-API properties
-                if method in ('name', 'tag', 'gameObject', 'transform', 'enabled'):
+                if method in skip_members or method in skip_methods:
                     continue
                     
                 api = f"{component}.{method}"
@@ -449,21 +554,12 @@ class UnityPipelineSimple:
                     continue
                 checked.add(api)
                 
-                # Check against RAG
-                results = self.rag.search(query=api, top_k=1, threshold=0.0)
-                if results:
-                    if results[0].score < threshold:
-                        suspicious.append({
-                            "api": api,
-                            "nearest": results[0].api_name,
-                            "score": results[0].score
-                        })
-                else:
-                    suspicious.append({"api": api, "nearest": None, "score": 0.0})
+                issue = check_api(api)
+                if issue:
+                    suspicious.append(issue)
         
         # =====================================================================
         # PATTERN 2: Common Unity base types (always check these)
-        # Transform, GameObject, Rigidbody, etc.
         # =====================================================================
         base_types = [
             ("transform", "Transform"),
@@ -471,13 +567,18 @@ class UnityPipelineSimple:
             ("rb", "Rigidbody"),
             ("rigidbody", "Rigidbody"),
             ("collider", "Collider"),
+            ("renderer", "Renderer"),
+            ("camera", "Camera"),
+            ("light", "Light"),
+            ("audio", "AudioSource"),
+            ("animator", "Animator"),
         ]
         
         for var_hint, type_name in base_types:
             pattern = rf'\b{re.escape(var_hint)}\s*\.\s*(\w+)'
             for match in re.finditer(pattern, code, re.IGNORECASE):
                 method = match.group(1)
-                if method in ('name', 'tag', 'gameObject', 'transform', 'enabled', 'position', 'rotation'):
+                if method in skip_members or method in skip_methods:
                     continue
                     
                 api = f"{type_name}.{method}"
@@ -485,35 +586,24 @@ class UnityPipelineSimple:
                     continue
                 checked.add(api)
                 
-                results = self.rag.search(query=api, top_k=1, threshold=0.0)
-                if results:
-                    if results[0].score < threshold:
-                        suspicious.append({
-                            "api": api,
-                            "nearest": results[0].api_name,
-                            "score": results[0].score
-                        })
-                else:
-                    suspicious.append({"api": api, "nearest": None, "score": 0.0})
+                issue = check_api(api)
+                if issue:
+                    suspicious.append(issue)
         
         # =====================================================================
         # PATTERN 3: ALL Class.member patterns (methods AND properties)
         # Catches: Time.deltaTime, Physics.Raycast(), Vector3.zero, etc.
         # =====================================================================
-        # Match ClassName.memberName (both method calls and property access)
         static_pattern = r'\b([A-Z][a-zA-Z0-9]+)\s*\.\s*([a-zA-Z][a-zA-Z0-9]*)'
         
         for match in re.finditer(static_pattern, code):
             class_name = match.group(1)
             member = match.group(2)
             
-            # Skip common non-Unity C# patterns
-            if class_name in ('System', 'List', 'Dictionary', 'Math', 'String', 'Array', 'Console', 
-                              'IEnumerator', 'IEnumerable', 'Action', 'Func', 'Task', 'File', 'Path'):
+            if class_name in skip_classes:
                 continue
             
-            # Skip if member is a common C# thing, not Unity API
-            if member in ('Length', 'Count', 'ToString', 'GetType', 'Equals', 'GetHashCode'):
+            if member in skip_methods:
                 continue
             
             api = f"{class_name}.{member}"
@@ -521,16 +611,48 @@ class UnityPipelineSimple:
                 continue
             checked.add(api)
             
-            results = self.rag.search(query=api, top_k=1, threshold=0.0)
-            if results:
-                if results[0].score < threshold:
-                    suspicious.append({
-                        "api": api,
-                        "nearest": results[0].api_name,
-                        "score": results[0].score
-                    })
-            else:
-                suspicious.append({"api": api, "nearest": None, "score": 0.0})
+            issue = check_api(api)
+            if issue:
+                suspicious.append(issue)
+        
+        # =====================================================================
+        # PATTERN 4: Constructor calls - new ClassName(...)
+        # Catches hallucinated constructors like: new AudioClip("path")
+        # =====================================================================
+        ctor_pattern = r'\bnew\s+([A-Z][a-zA-Z0-9]+)\s*\('
+        
+        # Known Unity types that CAN be constructed with new
+        constructable_types = {
+            'Vector2', 'Vector3', 'Vector4', 'Quaternion', 'Color', 'Rect', 'Bounds',
+            'Ray', 'RaycastHit', 'ContactPoint', 'WaitForSeconds', 'WaitForSecondsRealtime',
+            'WaitUntil', 'WaitWhile', 'WaitForEndOfFrame', 'WaitForFixedUpdate',
+            'Material', 'Mesh', 'Texture2D', 'RenderTexture', 'AnimationCurve',
+            'GUIStyle', 'GUIContent', 'GUILayoutOption',
+        }
+        
+        # Types that should NOT be constructed with new (use factory methods or assignment)
+        non_constructable_types = {
+            'AudioClip', 'AudioSource', 'GameObject', 'Transform', 'Component',
+            'Rigidbody', 'Collider', 'Renderer', 'Camera', 'Light', 'Animator',
+            'MonoBehaviour', 'ScriptableObject', 'Sprite', 'Font',
+        }
+        
+        for match in re.finditer(ctor_pattern, code):
+            type_name = match.group(1)
+            
+            ctor_key = f"new {type_name}"
+            if ctor_key in checked:
+                continue
+            checked.add(ctor_key)
+            
+            # Flag if trying to construct a non-constructable type
+            if type_name in non_constructable_types:
+                suspicious.append({
+                    "api": f"new {type_name}()",
+                    "nearest": f"Use GetComponent<{type_name}>() or Resources.Load<{type_name}>()",
+                    "score": 0.0,
+                    "type": "invalid_constructor"
+                })
         
         return suspicious
     
@@ -560,14 +682,25 @@ class UnityPipelineSimple:
         components = {}
         if ir_json:
             for comp in ir_json.get("components", []):
+                # Handle both string and dict formats from LLM
+                if isinstance(comp, dict):
+                    comp_name = comp.get("name", "")
+                elif isinstance(comp, str):
+                    comp_name = comp
+                else:
+                    continue
+                
+                if not comp_name:
+                    continue
+                
                 # Map common variable patterns to component types
-                components[comp.lower()] = comp
+                components[comp_name.lower()] = comp_name
                 # Common abbreviations
-                if comp == "Rigidbody":
-                    components["rb"] = comp
-                if comp == "AudioSource":
-                    components["audio"] = comp
-                    components["source"] = comp
+                if comp_name == "Rigidbody":
+                    components["rb"] = comp_name
+                if comp_name == "AudioSource":
+                    components["audio"] = comp_name
+                    components["source"] = comp_name
         
         # Add common Unity types always present
         common_types = {
@@ -644,9 +777,17 @@ class UnityPipelineSimple:
         missing = []
         
         for field in ir_fields:
-            field_name = field.get("name", "")
-            field_type = field.get("type", "float")
-            field_default = field.get("default")
+            # Handle case where field is not a dict
+            if isinstance(field, str):
+                field_name = field
+                field_type = "float"
+                field_default = None
+            elif isinstance(field, dict):
+                field_name = field.get("name", "")
+                field_type = field.get("type", "float")
+                field_default = field.get("default")
+            else:
+                continue
             
             if not field_name:
                 continue
@@ -783,7 +924,7 @@ class UnityPipelineSimple:
             print(f"Prompt: {prompt[:70]}...")
             print(f"{'='*70}")
             print(f"\n{'─'*70}")
-            print("│ ONESHOT (NL → C# direct)")
+            print("│ ONESHOT (NL -> C# direct)")
             print(f"{'─'*70}")
         
         result.oneshot_code = self.generate_oneshot(prompt)
@@ -796,7 +937,7 @@ class UnityPipelineSimple:
         # Generate via IR pipeline
         if self.verbose:
             print(f"\n{'─'*70}")
-            print("│ IR PIPELINE (NL → IR → C#)")
+            print("│ IR PIPELINE (NL -> IR -> C#)")
             print(f"{'─'*70}")
         
         ir_result = self.generate(prompt)
@@ -806,6 +947,7 @@ class UnityPipelineSimple:
             result.ir_code = ir_result.code
             result.ir_steered = ir_result.was_steered
             result.ir_rag_docs = ir_result.rag_docs_used
+            result.ir_rag_doc_names = ir_result.rag_doc_names
             
             # Print IR JSON
             if self.verbose:
@@ -857,8 +999,8 @@ class UnityPipelineSimple:
         
         print(f"\n  Unity Patterns Found:")
         for name, pattern in patterns:
-            oneshot_has = "✓" if result.oneshot_code and pattern in result.oneshot_code else "✗"
-            ir_has = "✓" if result.ir_code and pattern in result.ir_code else "✗"
+            oneshot_has = "[OK]" if result.oneshot_code and pattern in result.oneshot_code else "[X]"
+            ir_has = "[OK]" if result.ir_code and pattern in result.ir_code else "[X]"
             print(f"    {name:<20} Oneshot: {oneshot_has}  IR: {ir_has}")
         
         # RAG-based API validation for both outputs
@@ -872,11 +1014,11 @@ class UnityPipelineSimple:
                     print(f"    Oneshot: {len(oneshot_suspicious)} suspicious APIs")
                     for s in oneshot_suspicious[:3]:
                         if s["nearest"]:
-                            print(f"      ⚠ {s['api']} → {s['nearest']} ({s['score']:.2f})")
+                            print(f"      [!] {s['api']} -> {s['nearest']} ({s['score']:.2f})")
                         else:
-                            print(f"      ⚠ {s['api']} → not found")
+                            print(f"      [!] {s['api']} -> not found")
                 else:
-                    print(f"    Oneshot: All APIs validated ✓")
+                    print(f"    Oneshot: All APIs validated [OK]")
             
             # Validate IR pipeline code (with IR context for better type inference)
             if result.ir_code:
@@ -885,11 +1027,11 @@ class UnityPipelineSimple:
                     print(f"    IR:      {len(ir_suspicious)} suspicious APIs")
                     for s in ir_suspicious[:3]:
                         if s["nearest"]:
-                            print(f"      ⚠ {s['api']} → {s['nearest']} ({s['score']:.2f})")
+                            print(f"      [!] {s['api']} -> {s['nearest']} ({s['score']:.2f})")
                         else:
-                            print(f"      ⚠ {s['api']} → not found")
+                            print(f"      [!] {s['api']} -> not found")
                 else:
-                    print(f"    IR:      All APIs validated ✓")
+                    print(f"    IR:      All APIs validated [OK]")
         
         print(f"\n{'='*70}")
         print("Compare complete.")

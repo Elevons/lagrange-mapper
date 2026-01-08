@@ -1,0 +1,12 @@
+{
+  "_from_model_config": true,
+  "do_sample": true,
+  "eos_token_id": [
+    100265,
+    100257
+  ],
+  "max_new_tokens": 32768,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "transformers_version": "4.57.3"
+}

@@ -98,8 +98,14 @@ class UnityRAG:
         emb_path = os.path.join(self.db_path, "embeddings.npy")
         self.embeddings = np.load(emb_path)
         
+        # Load or compute namespace centroids for semantic selection
+        self._load_or_compute_centroids()
+        
         # Build type map for property chain validation
         self.type_map = self._build_type_map()
+        
+        # Build API whitelist for exact-match validation
+        self.api_whitelist = self._build_api_whitelist()
         
         if self.verbose:
             print(f"  Loaded {len(self.documents)} documents")
@@ -107,6 +113,7 @@ class UnityRAG:
             print(f"  Embeddings shape: {self.embeddings.shape}")
             print(f"  Content embedded: {self.has_embedded_content}")
             print(f"  Type map: {len(self.type_map)} entries")
+            print(f"  API whitelist: {len(self.api_whitelist)} entries")
             print(f"  Model: {self.config.get('model_name', 'unknown')}")
     
     def _build_type_map(self) -> Dict[str, str]:
@@ -172,6 +179,266 @@ class UnityRAG:
                 type_map[api_name] = return_type
         
         return type_map
+    
+    def _build_api_whitelist(self) -> Set[str]:
+        """
+        Build a set of all valid Unity APIs from the namespace index.
+        
+        Normalizes API names to "Class.Member" format for easy lookup.
+        Used for exact-match validation before falling back to semantic search.
+        
+        Returns:
+            Set of normalized API names like {"Transform.Translate", "Rigidbody.AddForce", ...}
+        """
+        whitelist = set()
+        
+        # Also track valid attributes (anything that could be [AttributeName])
+        self.valid_attributes = set()
+        
+        for ns_name, ns_data in self.namespaces.items():
+            api_names = ns_data.get("api_names", [])
+            
+            for api_name in api_names:
+                # Original format: "Namespace.Class.Method" or "Namespace.Class-property"
+                # or just "Class.Method" for core types
+                
+                # Normalize hyphen to dot
+                normalized = api_name.replace('-', '.')
+                
+                # Add full name
+                whitelist.add(normalized)
+                
+                # Extract just "Class.Member" (last two parts)
+                parts = normalized.split('.')
+                if len(parts) >= 2:
+                    # "Transform.Translate", "Rigidbody.AddForce"
+                    class_member = f"{parts[-2]}.{parts[-1]}"
+                    whitelist.add(class_member)
+                    
+                    # Also add just the class name for type checking
+                    whitelist.add(parts[-2])
+                    
+                    # If it ends with "Attribute", add to valid attributes
+                    if parts[-2].endswith("Attribute") or parts[-1].endswith("Attribute"):
+                        attr_name = parts[-2] if parts[-2].endswith("Attribute") else parts[-1]
+                        # Store both with and without "Attribute" suffix
+                        self.valid_attributes.add(attr_name)
+                        if attr_name.endswith("Attribute"):
+                            self.valid_attributes.add(attr_name[:-9])  # "SerializeField" from "SerializeFieldAttribute"
+                
+                # Handle constructor: "Class.ctor" -> just add "Class"
+                if parts[-1] == "ctor" and len(parts) >= 2:
+                    whitelist.add(parts[-2])
+        
+        # Add common Unity attributes that might not be in docs
+        common_attrs = {
+            "SerializeField", "SerializeFieldAttribute",
+            "Header", "HeaderAttribute",
+            "Tooltip", "TooltipAttribute", 
+            "Range", "RangeAttribute",
+            "Space", "SpaceAttribute",
+            "RequireComponent", "RequireComponentAttribute",
+            "ExecuteInEditMode", "ExecuteInEditModeAttribute",
+            "ExecuteAlways", "ExecuteAlwaysAttribute",
+            "HideInInspector", "HideInInspectorAttribute",
+            "ContextMenu", "ContextMenuAttribute",
+            "AddComponentMenu", "AddComponentMenuAttribute",
+            "CreateAssetMenu", "CreateAssetMenuAttribute",
+            "Serializable", "SerializableAttribute",  # System but commonly used
+        }
+        self.valid_attributes.update(common_attrs)
+        
+        return whitelist
+    
+    def _load_or_compute_centroids(self):
+        """Load cached namespace name embeddings or compute them."""
+        centroids_path = os.path.join(self.db_path, "namespace_name_embeddings.npy")
+        centroid_names_path = os.path.join(self.db_path, "namespace_names_list.json")
+        
+        if os.path.exists(centroids_path) and os.path.exists(centroid_names_path):
+            # Load cached embeddings
+            self.namespace_centroids = np.load(centroids_path)
+            with open(centroid_names_path, 'r') as f:
+                self.centroid_ns_names = json.load(f)
+            if self.verbose:
+                print(f"  Loaded {len(self.centroid_ns_names)} namespace name embeddings from cache")
+        else:
+            # Compute and cache
+            if self.verbose:
+                print("  Computing namespace name embeddings (first run)...")
+            self._compute_namespace_name_embeddings()
+            
+            # Save to cache
+            np.save(centroids_path, self.namespace_centroids)
+            with open(centroid_names_path, 'w') as f:
+                json.dump(self.centroid_ns_names, f)
+            if self.verbose:
+                print(f"  Saved {len(self.centroid_ns_names)} name embeddings to cache")
+    
+    def _compute_namespace_name_embeddings(self):
+        """
+        Embed namespace name + top API names for richer semantic matching.
+        
+        Example: "Color Lerp red green blue HSV RGB" instead of just "Color"
+        This gives more context while avoiding doc noise.
+        """
+        embeddings = []
+        names = []
+        
+        for ns_name, ns_data in self.namespaces.items():
+            # Build a rich description: namespace name + key API names
+            api_names = ns_data.get("api_names", [])
+            
+            # Extract just the method/property names (last part after dot)
+            method_names = []
+            for api in api_names[:10]:  # Take top 10 APIs
+                parts = api.replace('-', '.').split('.')
+                if len(parts) >= 1:
+                    method_names.append(parts[-1])
+            
+            # Combine: "Color Lerp LerpUnclamped red green blue HSVToRGB"
+            description = f"{ns_name} {' '.join(method_names)}"
+            
+            try:
+                emb = self._get_embedding(description)
+                emb = emb / np.linalg.norm(emb)
+                embeddings.append(emb)
+                names.append(ns_name)
+            except Exception as e:
+                if self.verbose:
+                    print(f"    Failed to embed '{ns_name}': {e}")
+        
+        self.namespace_centroids = np.array(embeddings, dtype=np.float32)
+        self.centroid_ns_names = names
+    
+    def _add_semantic_namespaces(self, ir_json: Dict, namespaces: List[str], top_k: int = 12):
+        """
+        Add namespaces based on semantic similarity to IR behavior text.
+        
+        Embeds each action separately to avoid one behavior type dominating,
+        then aggregates by voting across all queries.
+        """
+        # Collect individual action texts for separate embedding
+        action_texts = []
+        
+        for behavior in ir_json.get("behaviors", []):
+            # Handle both dict and string formats from LLM
+            if isinstance(behavior, str):
+                # Behavior is just a string description
+                if behavior:
+                    action_texts.append(behavior)
+                continue
+            
+            if not isinstance(behavior, dict):
+                continue
+            
+            # Each behavior's trigger + actions as one query
+            behavior_parts = []
+            
+            trigger = behavior.get("trigger", "")
+            if isinstance(trigger, str) and trigger:
+                behavior_parts.append(trigger)
+            
+            for action in behavior.get("actions", []):
+                if isinstance(action, dict):
+                    action_text = action.get("action", "") or action.get("name", "")
+                    if action_text:
+                        behavior_parts.append(str(action_text))
+                elif isinstance(action, str):
+                    behavior_parts.append(action)
+            
+            if behavior_parts:
+                action_texts.append(" ".join(behavior_parts))
+        
+        if not action_texts:
+            return
+        
+        try:
+            # Track namespace scores across all queries (voting)
+            ns_scores: Dict[str, float] = {}
+            
+            for query_text in action_texts:
+                # Get embedding for this action/behavior
+                query_emb = self._get_embedding(query_text)
+                query_emb = query_emb / np.linalg.norm(query_emb)
+                
+                # Compute similarity to all namespace centroids
+                similarities = np.dot(self.namespace_centroids, query_emb)
+                
+                # Add top-5 from this query to the vote (captures more breadth)
+                top_indices = np.argsort(similarities)[-5:][::-1]
+                for idx in top_indices:
+                    ns_name = self.centroid_ns_names[idx]
+                    sim = float(similarities[idx])
+                    # Accumulate score (higher similarity = more votes)
+                    ns_scores[ns_name] = ns_scores.get(ns_name, 0) + sim
+            
+            # Filter out editor-only/specialized namespaces that are rarely needed at runtime
+            editor_only = {
+                'SpeedTreeImporter', 'SpeedTree', 'SpeedTreeWindAsset', 'LightmapCompression', 
+                'LightTransport', 'TextureCompressionQuality', 'AudioCurveRendering', 
+                'ClusterInput', 'LowLevelPhysics2D', 'Experimental', 'Editor', 
+                'EditorGUI', 'EditorWindow', 'Sprites', 'ParticleSystemStopAction',
+                'NVIDIA', 'Viewpoint_1', 'Progress', 'DurationUnit', 'AnimatorUpdateMode'
+            }
+            
+            # Sort by accumulated score and take top-k
+            sorted_ns = sorted(ns_scores.items(), key=lambda x: x[1], reverse=True)
+            
+            added = 0
+            for ns_name, score in sorted_ns:
+                if added >= top_k:
+                    break
+                # Skip editor-only namespaces
+                if ns_name in editor_only:
+                    continue
+                if ns_name not in namespaces:
+                    namespaces.append(ns_name)
+                    added += 1
+                    if self.verbose:
+                        print(f"    + {ns_name} (semantic score: {score:.2f})")
+        
+        except Exception as e:
+            if self.verbose:
+                print(f"  Semantic namespace selection failed: {e}")
+    
+    def is_valid_api(self, api: str) -> bool:
+        """
+        Check if an API exists in the Unity documentation (exact match).
+        
+        Args:
+            api: API name like "Transform.Translate" or "Rigidbody.AddForce"
+            
+        Returns:
+            True if the API is in the whitelist
+        """
+        # Direct lookup
+        if api in self.api_whitelist:
+            return True
+        
+        # Try with namespace prefix variations
+        normalized = api.replace('-', '.')
+        if normalized in self.api_whitelist:
+            return True
+        
+        # Check if it's just a class name (for type checking)
+        parts = api.split('.')
+        if len(parts) == 1 and api in self.api_whitelist:
+            return True
+        
+        return False
+    
+    def is_valid_attribute(self, attr_name: str) -> bool:
+        """
+        Check if an attribute name is valid in Unity/C#.
+        
+        Args:
+            attr_name: Attribute name like "SerializeField" or "RequireComponent"
+            
+        Returns:
+            True if the attribute is known to be valid
+        """
+        return attr_name in self.valid_attributes
     
     def resolve_chain_type(self, base_type: str, chain: List[str]) -> Tuple[str, List[Dict]]:
         """
@@ -251,11 +518,15 @@ class UnityRAG:
         """
         types_found: Set[str] = set()
         
-        # Extract from fields
+        # Extract from fields (handle both dict and string formats from LLM)
         for field in ir_json.get("fields", []):
-            field_type = field.get("type", "")
-            if field_type and field_type not in ["float", "int", "string", "bool", "double"]:
-                types_found.add(field_type)
+            if isinstance(field, dict):
+                field_type = field.get("type", "")
+                if field_type and field_type not in ["float", "int", "string", "bool", "double"]:
+                    types_found.add(field_type)
+            elif isinstance(field, str):
+                # Field is just a string name, extract any type hints from it
+                self._extract_types_from_text(field, types_found)
         
         # Extract from components
         for component in ir_json.get("components", []):
@@ -264,17 +535,23 @@ class UnityRAG:
             elif isinstance(component, dict):
                 types_found.add(component.get("name", ""))
         
-        # Extract from behaviors (look for Unity types in action descriptions)
+        # Extract from behaviors (handle both dict and string formats from LLM)
         for behavior in ir_json.get("behaviors", []):
-            # Check trigger for type hints
-            trigger = behavior.get("trigger", "")
-            self._extract_types_from_text(trigger, types_found)
-            
-            # Check actions
-            for action in behavior.get("actions", []):
-                if isinstance(action, dict):
-                    action_text = action.get("action", "")
-                    self._extract_types_from_text(action_text, types_found)
+            if isinstance(behavior, str):
+                # Behavior is just a string description
+                self._extract_types_from_text(behavior, types_found)
+            elif isinstance(behavior, dict):
+                # Check trigger for type hints
+                trigger = behavior.get("trigger", "")
+                self._extract_types_from_text(trigger, types_found)
+                
+                # Check actions
+                for action in behavior.get("actions", []):
+                    if isinstance(action, dict):
+                        action_text = action.get("action", "")
+                        self._extract_types_from_text(action_text, types_found)
+                    elif isinstance(action, str):
+                        self._extract_types_from_text(action, types_found)
         
         # Map types to namespaces
         namespaces = []
@@ -284,12 +561,15 @@ class UnityRAG:
                 if ns not in namespaces:
                     namespaces.append(ns)
         
-        # Add common namespaces based on patterns
-        self._add_inferred_namespaces(ir_json, namespaces)
-        
         if self.verbose:
             print(f"  Types found: {types_found}")
-            print(f"  Namespaces selected: {namespaces}")
+            print(f"  Type-based namespaces: {namespaces}")
+        
+        # Add semantically similar namespaces based on IR behavior text
+        self._add_semantic_namespaces(ir_json, namespaces, top_k=8)
+        
+        if self.verbose:
+            print(f"  Final namespaces: {namespaces}")
         
         return namespaces
     
@@ -392,19 +672,38 @@ class UnityRAG:
         # Components needed
         components = ir_json.get("components", [])
         if components:
-            parts.append(f"Uses: {', '.join(components)}")
+            # Handle both string and dict components
+            comp_names = []
+            for c in components:
+                if isinstance(c, str):
+                    comp_names.append(c)
+                elif isinstance(c, dict):
+                    comp_names.append(c.get("name", ""))
+            if comp_names:
+                parts.append(f"Uses: {', '.join(comp_names)}")
         
-        # Behavior descriptions
+        # Behavior descriptions (handle both dict and string formats from LLM)
         for behavior in ir_json.get("behaviors", []):
+            if isinstance(behavior, str):
+                # Behavior is just a string description
+                if behavior:
+                    parts.append(behavior)
+                continue
+            
+            if not isinstance(behavior, dict):
+                continue
+            
             trigger = behavior.get("trigger", "")
-            if trigger:
+            if isinstance(trigger, str) and trigger:
                 parts.append(trigger)
             
             for action in behavior.get("actions", []):
                 if isinstance(action, dict):
                     action_text = action.get("action", "")
                     if action_text:
-                        parts.append(action_text)
+                        parts.append(str(action_text))
+                elif isinstance(action, str):
+                    parts.append(action)
         
         return " ".join(parts)
     
@@ -453,22 +752,54 @@ class UnityRAG:
         # Compute cosine similarities
         similarities = np.dot(doc_embs, query_emb)
         
-        # Filter and sort
+        # Core namespaces that developers use daily - boost these
+        core_namespaces = {
+            "Transform", "GameObject", "MonoBehaviour", "Rigidbody", "Rigidbody2D",
+            "AudioSource", "AudioClip", "Material", "Renderer", "MeshRenderer",
+            "SpriteRenderer", "Light", "Camera", "Physics", "Physics2D",
+            "Mathf", "Time", "Input", "Random", "Vector3", "Vector2", "Vector4",
+            "Quaternion", "Color", "Object", "Collider", "Collider2D",
+            "Animator", "Animation", "ParticleSystem", "LineRenderer", "TrailRenderer",
+            "Canvas", "RectTransform", "Image", "Text", "Button",
+            "Rigidbody", "CharacterController", "NavMeshAgent",
+            "Ray", "RaycastHit", "Bounds", "Plane"
+        }
+        
+        # Filter and sort with depth weighting
         results = []
         for i, sim in enumerate(similarities):
             if sim >= threshold:
                 doc_idx = doc_indices[i]
                 doc = self.documents[doc_idx]
+                
+                # Calculate depth weight - penalize deeply nested APIs
+                api_name = doc["api_name"]
+                depth = api_name.count('.') + api_name.count('-')  # Count separators
+                weight = 1.0 / (1.0 + depth * 0.5)  # depth 0->1.0, depth 1->0.67, depth 2->0.5
+                
+                # Boost core namespaces
+                namespace = doc["namespace"]
+                if namespace in core_namespaces:
+                    weight *= 1.5  # 50% boost for core APIs
+                
+                # Penalize internal/low-level namespaces
+                if namespace.startswith("LowLevel") or namespace.startswith("Internal"):
+                    weight *= 0.3
+                if "Editor" in namespace or "Experimental" in namespace:
+                    weight *= 0.5
+                
+                adjusted_score = float(sim) * weight
+                
                 results.append(RetrievedDoc(
                     id=doc["id"],
                     namespace=doc["namespace"],
                     api_name=doc["api_name"],
                     file_path=doc["file_path"],
                     title=doc["title"],
-                    score=float(sim)
+                    score=adjusted_score  # Use adjusted score
                 ))
         
-        # Sort by score descending
+        # Sort by adjusted score descending
         results.sort(key=lambda x: x.score, reverse=True)
         
         return results[:top_k]
@@ -605,12 +936,18 @@ class UnityRAG:
         Returns:
             (is_valid, suggestions) where suggestions are (api_name, score) tuples
         """
-        # Check exact match first
+        # Method 1: Check against pre-built whitelist (fast, handles normalization)
+        if self.is_valid_api(api_name):
+            return True, [(api_name, 1.0)]
+        
+        # Method 2: Check exact match in documents (with normalization)
+        normalized_query = api_name.replace('-', '.')
         for doc in self.documents:
-            if doc["api_name"] == api_name or doc["api_name"].endswith(f".{api_name}"):
+            doc_api = doc["api_name"].replace('-', '.')
+            if doc_api == normalized_query or doc_api.endswith(f".{normalized_query}"):
                 return True, [(doc["api_name"], 1.0)]
         
-        # Search for similar APIs
+        # Method 3: Search for similar APIs via embedding
         query_emb = self._get_embedding(api_name)
         query_emb = query_emb / np.linalg.norm(query_emb)
         
@@ -625,7 +962,7 @@ class UnityRAG:
         # Get top suggestions
         top_indices = np.argsort(similarities)[::-1][:5]
         suggestions = [
-            (self.documents[i]["api_name"], float(similarities[i]))
+            (self.documents[i]["api_name"].replace('-', '.'), float(similarities[i]))
             for i in top_indices
             if similarities[i] >= threshold
         ]

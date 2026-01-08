@@ -1,0 +1,117 @@
+[
+  {
+    "prompt_num": 1,
+    "prompt": "Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase.",
+    "timestamp": "2026-01-08T11:02:16.112573",
+    "oneshot_code": null,
+    "ir_json": {
+      "class_name": "SpinUpExplosion",
+      "components": [
+        "Rigidbody",
+        "AudioSource"
+      ],
+      "fields": [
+        {
+          "name": "start_speed",
+          "type": "float",
+          "default": 0.1
+        },
+        {
+          "name": "max_speed",
+          "type": "float",
+          "default": 50.0
+        },
+        {
+          "name": "explosion_radius",
+          "type": "float",
+          "default": 3.0
+        },
+        {
+          "name": "fragment_count",
+          "type": "int",
+          "default": 10
+        },
+        {
+          "name": "fragment_speed_range",
+          "type": "float[]",
+          "default": [
+            5,
+            20
+          ]
+        },
+        {
+          "name": "fragment_scale_range",
+          "type": "float[]",
+          "default": [
+            0.3,
+            0.8
+          ]
+        },
+        {
+          "name": "fragment_material_color_shift",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "explosion_sound",
+          "type": "AudioClip",
+          "default": null
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "spin_up",
+          "trigger": "when play button pressed",
+          "actions": [
+            {
+              "action": "start spin-up animation"
+            },
+            {
+              "action": "increase object speed over time"
+            },
+            {
+              "action": "play spinning sound effect"
+            },
+            {
+              "action": "fade material color to red"
+            }
+          ]
+        },
+        {
+          "name": "explosion",
+          "trigger": "when max spin reached",
+          "actions": [
+            {
+              "action": "destroy original object"
+            },
+            {
+              "action": "create and spawn explosion particles"
+            },
+            {
+              "action": "play explosion sound effect"
+            },
+            {
+              "action": "spawn fragments at center of explosion"
+            },
+            {
+              "action": "apply random spin direction to each fragment"
+            },
+            {
+              "action": "make each fragment bounce around randomly"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing System.Collections;\n\npublic class SpinUpExplosion : MonoBehaviour {\n    [SerializeField] private float startSpeed = 0.1f;\n    [SerializeField] private float maxSpeed = 50.0f;\n    [SerializeField] private float spinUpDuration = 2.0f;\n\n    [SerializeField] private bool explodeOnMaxSpin = true;\n    [SerializeField] private float explosionRadius = 3.0f;\n    [SerializeField] private int fragmentCount = 10;\n    [SerializeField] private float[] fragmentSpeedRange = { 5, 20 };\n    [SerializeField] private float[] fragmentScaleRange = { 0.3f, 0.8f };\n\n    [SerializeField] private AudioClip explosionSound;\n\n    private Rigidbody rb;\n    private Vector3 initialSpinDirection;\n    private float currentSpeed;\n    private float maxSpinTimer;\n\n    // Start is called before the first frame update\n    void Start() {\n        rb = GetComponent<Rigidbody>();\n        if (rb == null) {\n            Debug.LogWarning(\"Rigidbody component not found on SpinUpExplosion!\");\n        }\n\n        if (explodeOnMaxSpin && explosionSound == null) {\n            Debug.LogWarning(\"Audio source required for explosion sound!\");\n        }\n    }\n\n    // Update is called once per frame\n    void Update() {\n        currentSpeed = rb.velocity.magnitude;\n        maxSpinTimer += Time.deltaTime;\n\n        float progress = Mathf.Clamp01(maxSpinTimer / spinUpDuration);\n        float targetSpeed = Mathf.Lerp(startSpeed, maxSpeed, progress);\n\n        rb.angularVelocity = initialSpinDirection * targetSpeed;\n\n        if (explodeOnMaxSpin && currentSpeed >= maxSpeed) {\n            PerformExplosion();\n        }\n    }\n\n    private void PerformExplosion() {\n        Destroy(gameObject); // Destroy original object\n\n        Instantiate(explosionSound, transform.position, Quaternion.identity);\n\n        Vector3 spawnPos = transform.position;\n        for (int i = 0; i < fragmentCount; i++) {\n            float randomSpeed = Random.Range(fragmentSpeedRange[0], fragmentSpeedRange[1]);\n            float randomScale = Random.Range(fragmentScaleRange[0], fragmentScaleRange[1]);\n\n            GameObject explosionFragment = Instantiate(gameObject, spawnPos, Quaternion.identity);\n            explosionFragment.transform.localScale *= randomScale;\n            explosionFragment.GetComponent<Rigidbody>().velocity = transform.forward * randomSpeed;\n\n            Vector3 randomSpinDirection = Random.insideUnitSphere.normalized;\n            explosionFragment.GetComponent<ExplosionFragment>().initialSpinDirection = randomSpinDirection;\n        }\n    }\n\n    public void PlaySpinUpAnimation() {\n        initialSpinDirection = transform.forward;\n        rb.angularDrag = 0f; // Disable drag for smooth spin\n        StartCoroutine(SpinUpCoroutine());\n    }\n\n    private IEnumerator SpinUpCoroutine() {\n        yield return new WaitForSeconds(0.1f); // Delay before starting spin\n\n        float currentTimer = 0f;\n\n        while (currentTimer < spinUpDuration) {\n            currentTimer += Time.deltaTime;\n            float progress = Mathf.Clamp01(currentTimer / spinUpDuration);\n            float targetSpeed = Mathf.Lerp(startSpeed, maxSpeed, progress);\n\n            rb.angularVelocity = initialSpinDirection * targetSpeed;\n\n            yield return null; // Yield to update\n        }\n    }\n\n}",
+    "ir_steered": true,
+    "ir_rag_docs": 8,
+    "ir_rag_doc_names": null,
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": null,
+    "error": null
+  }
+]

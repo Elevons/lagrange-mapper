@@ -1,0 +1,104 @@
+# CRAZY TEST PROMPTS FOR UNITY PIPELINE
+# These prompts are designed to stress-test your workflow with complex, edge-case scenarios
+
+# ============================================================================
+# MULTI-COMPONENT CHAOS
+# ============================================================================
+
+1. "Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase."
+
+2. "Make a gravity well that pulls nearby rigidbodies toward it with increasing force based on distance, plays a low-frequency rumble that gets louder as objects get closer, changes the light intensity based on how many objects are currently being pulled, and creates particle effects at the point where objects collide with the center, all while rotating the entire gravity well slowly."
+
+3. "Build a script that turns any object into a musical instrument - when you collide with it, it plays a note based on where you hit it (top plays high notes, bottom plays low notes), the object's color shifts to match the note's frequency, it vibrates with the sound, and leaves a trail of particles that fade out over 2 seconds."
+
+# ============================================================================
+# STATE MACHINE MADNESS
+# ============================================================================
+
+4. "Create a creature that has 5 states: idle (sits still, plays ambient breathing), curious (slowly approaches player if within 10 units, plays questioning sound), scared (runs away from player, plays panic sound, color turns red), aggressive (chases player, plays roar, color turns dark, applies force toward player), and exhausted (stops moving, plays tired sound, color fades to gray). It transitions between states based on player distance and how long it's been in current state."
+
+5. "Make a door that has locked, unlocking, open, and closing states. When locked, it plays a rattle sound and shakes slightly. When unlocking, it plays a key-turning sound for 3 seconds while rotating slowly, then transitions to open. When open, it plays a creak and stays open for 10 seconds, then automatically starts closing. During closing, it rotates back while playing a slam sound, then locks again. The door's material emission color changes with each state."
+
+# ============================================================================
+# PHYSICS NIGHTMARES
+# ============================================================================
+
+6. "Create a bouncy ball that, every time it hits a surface, bounces higher than the previous bounce, plays a pitch that increases with each bounce, changes color based on bounce count, and leaves a temporary trail. After 10 bounces, it explodes into confetti particles while playing a celebration sound."
+
+7. "Make an object that floats upward when you're near it (within 5 units), but falls faster when you're far away. It plays a humming sound that gets higher pitched as it rises, and lower pitched as it falls. The object also rotates opposite to its vertical movement direction, and its scale pulses in sync with the audio frequency."
+
+8. "Build a physics-based pendulum that swings naturally, but when it reaches the bottom of its swing, it applies an explosive force to any rigidbody it touches, plays a bell sound, and creates a shockwave particle effect. The pendulum's rope length can be adjusted, and the swing speed affects the volume of the bell sound."
+
+# ============================================================================
+# TIME-BASED COMPLEXITY
+# ============================================================================
+
+9. "Create a time bomb that beeps every second, with the beep frequency increasing as time runs down. The object's color pulses red in sync with beeps, and it shakes more violently as time decreases. After 10 seconds, it explodes with a massive force affecting all rigidbodies in a 20-unit radius, plays an explosion sound, and spawns fire particles that last 5 seconds."
+
+10. "Make a script that gradually transforms an object over 30 seconds: it smoothly rotates 360 degrees, scales from 1x to 2x and back, changes color through the rainbow spectrum, moves in a figure-8 pattern, and plays a continuous musical note that shifts pitch based on the current transformation phase. All transformations must be perfectly synchronized."
+
+# ============================================================================
+# AUDIO-VISUAL SYMPHONY
+# ============================================================================
+
+11. "Create a visualizer that reacts to audio: when a sound plays, the object's scale increases proportionally to the audio volume, its color shifts based on the audio frequency (low = red, mid = green, high = blue), it rotates based on the audio waveform, and spawns particles that move outward in sync with the beat. The object should analyze the AudioSource's spectrum data in real-time."
+
+12. "Make a singing crystal that, when touched, plays a sequence of 5 musical notes in a chord progression. Each note lights up a different part of the crystal (top, middle, bottom, left, right), and the entire crystal pulses with the rhythm. After the sequence completes, it plays a final harmonious note and creates a burst of light particles."
+
+# ============================================================================
+# CONDITIONAL LOGIC CHAINS
+# ============================================================================
+
+13. "Build a pressure plate system: when weight is applied (detected via collision), it plays a click sound, changes color to green, and starts a 5-second timer. If weight is removed before 5 seconds, it resets. If weight stays for 5 seconds, it plays a success sound, spawns a reward object, and triggers all nearby pressure plates to also activate. Each pressure plate remembers how many times it's been activated."
+
+14. "Create a combo system: hitting an object once makes it glow yellow and play a low note. Hitting it again within 2 seconds makes it glow orange and play a higher note. A third hit within 2 seconds makes it glow red and play an even higher note. A fourth hit within 2 seconds creates an explosion effect, plays a victory sound, and spawns 5 bonus objects. Missing the 2-second window resets the combo."
+
+# ============================================================================
+# UNUSUAL COMBINATIONS
+# ============================================================================
+
+15. "Make a portal that, when you enter it, plays a whoosh sound, rotates you 180 degrees instantly, reverses your velocity, changes your color to a random hue, scales you to 0.5x size, and teleports you to a random location within 50 units, all while creating a visual distortion effect at both the entry and exit points."
+
+16. "Create a mimic chest: it looks like a normal chest until you get within 3 units, then it opens its lid (rotates 90 degrees), plays a creak sound, and reveals glowing eyes. If you touch it, it snaps shut (plays slam sound), applies a strong force pushing you away, changes to a dark material, and spawns 3 smaller mimic objects that chase you while playing menacing sounds."
+
+# ============================================================================
+# ENVIRONMENTAL INTERACTIONS
+# ============================================================================
+
+17. "Build a weather controller: when activated, it spawns rain particles that fall downward, plays rain sound effects, makes all objects in the scene slightly dampen (reduce bounce), changes ambient lighting to be darker, and after 10 seconds of rain, spawns lightning bolts (bright flashes) that play thunder sounds and briefly illuminate everything."
+
+18. "Create a gravity field that inverts gravity for all objects within its radius, plays a space-warp sound, creates a visual distortion shader effect, and gradually rotates the entire affected area. Objects that enter the field should smoothly transition their gravity direction over 1 second, and when they exit, they should transition back to normal gravity over 1 second."
+
+# ============================================================================
+# META/REFLEXIVE BEHAVIORS
+# ============================================================================
+
+19. "Make a script that watches itself: it counts how many times its Update method has been called, and every 1000 calls, it plays a different sound, changes its own material, and spawns a clone of itself. The clone also has this same behavior, but starts its counter at 0. Each generation of clones plays a slightly higher-pitched sound than its parent."
+
+20. "Create a self-modifying object: it starts with basic properties, but every time it collides with something, it increases its own mass by 10%, plays a growth sound, scales up by 5%, and adds a new random color tint to its material. After 10 collisions, it splits into two identical objects, each with half the accumulated properties, and both continue the same behavior."
+
+# ============================================================================
+# EXTREME EDGE CASES
+# ============================================================================
+
+21. "Build a script that only works during specific conditions: it checks if the current time of day (using System.DateTime) is between 2 AM and 4 AM. If true, it makes the object glow, play spooky sounds, and move erratically. If false, it does nothing. The object should also check if there are exactly 7 other objects with Rigidbody components in the scene, and only then activate its full behavior."
+
+22. "Create a quantum object that exists in two states simultaneously: when observed (player is looking at it, detected via raycast), it collapses to one state (visible, plays observation sound). When not observed, it exists in superposition (flickers between two positions, plays quantum hum, has translucent material). The object should track whether it's currently being observed every frame."
+
+# ============================================================================
+# PERFORMANCE STRESS TEST
+# ============================================================================
+
+23. "Make a particle fountain that spawns 100 particles per second, each with its own physics, unique color based on spawn time, and individual audio source playing a unique pitch. Each particle should track the nearest other particle and create a visual line between them if within 2 units. After 5 seconds, all particles should simultaneously explode outward while playing a chord made of all their individual pitches combined."
+
+24. "Create a chain reaction system: when object A is touched, it explodes and spawns 5 objects of type B in a circle. Each B object, when touched, explodes and spawns 3 objects of type C. Each C object spawns 2 objects of type D. Each D object spawns 1 object of type E. Type E objects play a final victory sound and create a massive particle burst. All explosions should chain-react if objects are close enough to each other."
+
+# ============================================================================
+# ABSOLUTELY BONKERS
+# ============================================================================
+
+25. "Build a script that creates a recursive reality: the object contains a miniature version of the entire scene inside it (as a texture on its material). When you zoom into that texture (detected via camera distance), it reveals that the miniature scene also contains the same object with the same miniature scene, creating infinite recursion. Each recursive level should play a different musical note, and the object should scale based on which recursive level you're currently viewing."
+
+26. "Make a chaos engine: it randomly selects from 20 different behaviors every 3 seconds (spin, bounce, scale pulse, color shift, audio play, particle burst, force application, teleport, rotation, etc.). Each behavior has a random intensity and duration. The object should never repeat the same behavior twice in a row, and should create a unique sound effect for each behavior transition. After 60 seconds of chaos, it should settle into a calm, meditative state with soft colors and ambient sounds."
+
+

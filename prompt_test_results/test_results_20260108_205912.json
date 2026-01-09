@@ -1,0 +1,352 @@
+[
+  {
+    "prompt_num": 1,
+    "prompt": "Build a disco ball that rotates while projecting colored light beams in random directions, plays electronic music that changes tempo based on how many players are nearby, and spawns glitter particles that drift downward and fade over 3 seconds when any object passes through the light beams.",
+    "timestamp": "2026-01-08T20:51:19.027058",
+    "oneshot_code": "using System.Collections.Generic;\nusing UnityEngine;\n\npublic class DiscoBall : MonoBehaviour\n{\n    [Header(\"Disco Ball Settings\")]\n    [SerializeField] private float _rotationSpeed = 100f;\n    [SerializeField] private bool _useRandomRotation = true;\n    [SerializeField] private float _minRotationAngle = -90f;\n    [SerializeField] private float _maxRotationAngle = 90f;\n    \n    [Header(\"Light Projection\")]\n    [SerializeField] private Light[] _projectorLights;\n    [SerializeField] private Color[] _lightColors = new Color[8];\n    [SerializeField] private bool _enableRandomColor = true;\n    [SerializeField] private float _colorTransitionSpeed = 2f;\n    \n    [Header(\"Glitter Settings\")]\n    [SerializeField] private ParticleSystem[] _glitterSystems;\n    [SerializeField] private float _maxGlitterCount = 1000f;\n    [SerializeField] private LayerMask _glitterLayerMask = -1;\n    [SerializeField] private float _driftSpeed = 2f;\n    [SerializeField] private float _fadeSpeed = 5f;\n    \n    [Header(\"Music Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip[] _musicTracks;\n    [SerializeField] private bool _enableRandomMusic = true;\n    [SerializeField] private float _musicVolume = 0.7f;\n    \n    private float _currentRotationAngle = 0f;\n    private Color _currentColor = Color.white;\n    private int _activeGlitterCount = 0;\n    private int _nextMusicIndex = 0;\n    private bool _isPlayingMusic = false;\n    \n    private void Start()\n    {\n        InitializeProjectors();\n        InitializeGlitterSystems();\n        SetupAudioSource();\n        UpdateCurrentColor();\n        \n        if (_enableRandomRotation)\n            StartCoroutine(RotateDiscoBall());\n    }\n    \n    private void Update()\n    {\n        if (!_enableRandomRotation)\n        {\n            RotateDiscoBall();\n        }\n        \n        UpdateLightProjections();\n        UpdateGlitterSystems();\n        UpdateMusic();\n    }\n    \n    private void InitializeProjectors()\n    {\n        for (int i = 0; i < _projectorLights.Length; i++)\n        {\n            if (_projectorLights[i] == null) continue;\n            \n            Vector3 startDirection = transform.forward;\n            Vector3 endPoint = transform.position + startDirection * 10f;\n            _projectorLights[i].direction = (endPoint - transform.position).normalized;\n            \n            Color lightColor = _lightColors[i % _lightColors.Length];\n            if (_enableRandomColor)\n                lightColor = RandomColor();\n            _projectorLights[i].color = lightColor;\n        }\n    }\n    \n    private void InitializeGlitterSystems()\n    {\n        for (int i = 0; i < _glitterSystems.Length; i++)\n        {\n            if (_glitterSystems[i] == null) continue;\n            \n            var main = _glitterSystems[i].main;\n            main.startLifetime = 3f;\n            main.startSpeed = _driftSpeed * Mathf.Cos(Time.time * 0.5f);\n            main.startLifetime = Mathf.Abs(main.startLifetime);\n        }\n    }\n    \n    private void SetupAudioSource()\n    {\n        if (_audioSource == null)\n        {\n            _audioSource = GetComponent<AudioSource>();\n            if (_audioSource == null)\n                _audioSource = gameObject.AddComponent<AudioSource>();\n        }\n        \n        _audioSource.playOnAwake = false;\n        _audioSource.loop = true;\n        _audioSource.volume = _musicVolume;\n    }\n    \n    private void UpdateCurrentColor()\n    {\n        if (!_enableRandomColor)\n            return;\n            \n        float t = Random.Range(0f, 1f);\n        _currentColor = Color.Lerp(Color.white, new Color(t, t * 0.8f, t * 0.6f, t), _colorTransitionSpeed * Time.deltaTime);\n    }\n    \n    private void RotateDiscoBall()\n    {\n        if (!_enableRandomRotation) return;\n        \n        float angle = (Time.time * _rotationSpeed) % (2 * Mathf.PI);\n        _currentRotationAngle = Mathf.Clamp(angle, _minRotationAngle, _maxRotationAngle);\n        \n        transform.Rotate(Vector3.up, _currentRotationAngle, Space.Self);\n    }\n    \n    private void UpdateLightProjections()\n    {\n        for (int i = 0; i < _projectorLights.Length; i++)\n        {\n            if (_projectorLights[i] == null) continue;\n            \n            Vector3 lightDirection = _projectorLights[i].direction;\n            Vector3 startPos = transform.position;\n            Vector3 endPoint = startPos + lightDirection * 20f;\n            \n            // Update direction slightly for movement effect\n            lightDirection.y += Mathf.Sin(Time.time * 0.1f) * 0.5f;\n            lightDirection.Normalize();\n            \n            _projectorLights[i].direction = lightDirection;\n        }\n    }\n    \n    private void UpdateGlitterSystems()\n    {\n        for (int i = 0; i < _glitterSystems.Length; i++)\n        {\n            if (_glitterSystems[i] == null) continue;\n            \n            var main = _glitterSystems[i].main;\n            float speed = Mathf.Abs(Mathf.Sin(Time.time * 2f)) * _driftSpeed;\n            main.startLifetime = Mathf.Abs(main.startLifetime);\n            main.startSpeed = speed;\n        }\n    }\n    \n    private void UpdateMusic()\n    {\n        if (!_enableRandomMusic || _audioSource == null) return;\n        \n        int trackIndex = _nextMusicIndex % _musicTracks.Length;\n        _audioSource.clip = _musicTracks[trackIndex];\n        _audioSource.Play();\n        _isPlayingMusic = true;\n        \n        // Change tempo based on nearby objects\n        float nearbyObjectsCount = 0f;\n        Collider[] colliders = Physics.OverlapSphere(transform.position, 5f);\n        foreach (Collider col in colliders)\n        {\n            if (col.CompareTag(\"Player\"))\n                nearbyObjectsCount++;\n            else if (!col.isTrigger && !col.CompareTag(\"DiscoBall\"))\n                nearbyObjectsCount++;\n        }\n        \n        float tempoMultiplier = Mathf.Pow(2f, nearbyObjectsCount * 0.1f);\n        _audioSource.pitch = Mathf.Lerp(1f, tempoMultiplier, Time.deltaTime * 5f);\n    }\n    \n    private Color RandomColor()\n    {\n        return new Color(Random.value, Random.value * 0.7f, Random.value * 0.5f, Random.value * 0.3f);\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 2f);\n        \n        for (int i = 0; i < _projectorLights.Length; i++)\n        {\n            if (_projectorLights[i] != null)\n            {\n                Vector3 startPos = transform.position;\n                Vector3 direction = _projectorLights[i].direction;\n                Vector3 endPoint = startPos + direction * 10f;\n                \n                Gizmos.DrawLine(startPos, endPoint);\n                \n                // Draw light color indicator\n                Color lightColor = _projectorLights[i].color;\n                Gizmos.color = lightColor;\n                Gizmos.DrawWireCube(endPoint - startPos, Vector3.one * 0.5f);\n            }\n        }\n    }\n    \n    private IEnumerator RotateDiscoBall()\n    {\n        while (true)\n        {\n            yield return new WaitForSeconds(1f / _rotationSpeed);\n            UpdateLightProjections();\n        }\n    }\n    \n    public void StopGlitter()\n    {\n        for (int i = 0; i < _glitterSystems.Length; i++)\n        {\n            if (_glitterSystems[i] != null)\n                _glitterSystems[i].stop;\n        }\n    }\n    \n    private void OnTriggerEnter(Collider other)\n    {\n        // Handle glitter particles entering light beams\n        Collider[] beamColliders = new Collider[_projectorLights.Length];\n        for (int i = 0; i < _projectorLights.Length; i++)\n        {\n            if (_projectorLights[i] != null && _projectorLights[i].isTrigger)\n            {\n                Vector3 startPos = transform.position;\n                Vector3 direction = _projectorLights[i].direction;\n                beamColliders[i] = new BoxCollider(startPos + direction * 10f, Vector3.one * 0.5f);\n            }\n        }\n        \n        for (int i = 0; i < beamColliders.Length; i++)\n        {\n            if (beamColliders[i] != null)\n            {\n                Collider hitCollider = Physics.OverlapBox(beamColliders[i].bounds.center, beamColliders[i].bounds.size, other);\n                if (hitCollider != null && !hitCollider.CompareTag(\"DiscoBall\"))\n                {\n                    StopGlitter();\n                    break;\n                }\n            }\n        }\n    }\n    \n    private void OnTriggerStay(Collider other)\n    {\n        // Add glitter to the object\n        var particleSystem = other.GetComponent<ParticleSystem>();\n        if (particleSystem != null)\n        {\n            ParticleData data = particleSystem.data;\n            data.addParticles = Mathf.Ceil(_maxGlitterCount * 0.5f);\n            \n            ParticleSystem[] newSystems = new ParticleSystem[data.addParticles];\n            for (int i = 0; i < data.addParticles; i++)\n            {\n                ParticleData subData = new ParticleData();\n                subData.typeID = Random.Range(1, ParticleSystem.MaxParticlesPerSystem + 1);\n                newSystems[i] = particleSystem.CreateParticle(subData);\n            }\n            \n            foreach (ParticleSystem ps in newSystems)\n            {\n                if (ps != null)\n                    other.AddComponent<ParticleSystem>(ps);\n            }\n        }\n    }\n    \n    public void ResetDiscoBall()\n    {\n        StopGlitter();\n        \n        for (int i = 0; i < _projectorLights.Length; i++)\n        {\n            if (_projectorLights[i] != null && _projectorLights[i].isTrigger)\n                _projectorLights[i].enabled = false;\n        }\n        \n        transform.position = Vector3.zero;\n    }\n}",
+    "ir_json": {
+      "class_name": "DiscoBall",
+      "components": [
+        "Animator",
+        "Light",
+        "AudioSource"
+      ],
+      "fields": [
+        {
+          "name": "rotationSpeed",
+          "type": "float",
+          "default": 120
+        },
+        {
+          "name": "beamCount",
+          "type": "int",
+          "default": 8
+        },
+        {
+          "name": "_beams",
+          "type": "Light beam[]",
+          "default": null
+        },
+        {
+          "name": "musicClip",
+          "type": "AudioClip",
+          "default": null
+        },
+        {
+          "name": "baseTempo",
+          "type": "float",
+          "default": 120
+        },
+        {
+          "name": "maxPlayers",
+          "type": "int",
+          "default": 4
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "continuous_rotation",
+          "trigger": "every frame while active",
+          "actions": [
+            {
+              "action": "rotate ball around vertical axis at rotationSpeed"
+            },
+            {
+              "action": "update beam orientations to match rotation"
+            }
+          ]
+        },
+        {
+          "name": "create_beam_lines",
+          "trigger": "when game starts and beams are null",
+          "actions": [
+            {
+              "action": "generate _beams with random directions spaced evenly around circle"
+            },
+            {
+              "action": "set each beam intensity to 0.5"
+            }
+          ]
+        },
+        {
+          "name": "light_environment",
+          "trigger": "every frame while active and beams exist",
+          "actions": [
+            {
+              "action": "cast all beam rays outward in their directions with spread 0.1"
+            }
+          ]
+        },
+        {
+          "name": "detect_players_in_beam",
+          "trigger": "when any player enters a light beam area",
+          "actions": [
+            {
+              "action": "increment player count tracker by one"
+            },
+            {
+              "action": "adjust music tempo upward based on number of players"
+            }
+          ]
+        },
+        {
+          "name": "update_music_tempo",
+          "trigger": "every second when music is playing and players exist",
+          "actions": [
+            {
+              "action": "set music base tempo to range between 90% and 150% of maxTempo based on player count"
+            },
+            {
+              "action": "apply pitch shift to match new tempo"
+            }
+          ]
+        },
+        {
+          "name": "play_music_loop",
+          "trigger": "when music clip becomes valid and looped",
+          "actions": [
+            {
+              "action": "play music continuously with current tempo settings"
+            }
+          ]
+        },
+        {
+          "name": "spawn_glitter_particles",
+          "trigger": "continuously while active",
+          "actions": [
+            {
+              "action": "create glitter particle at random positions above ball"
+            },
+            {
+              "action": "set particle velocity to downward and random horizontal directions"
+            },
+            {
+              "action": "assign color based on beam colors or random gradient"
+            }
+          ]
+        },
+        {
+          "name": "drifting_glitter_behavior",
+          "trigger": "while glitter particles are active",
+          "actions": [
+            {
+              "action": "move particle downward with slight randomness in speed"
+            },
+            {
+              "action": "fade out gradually over 3 seconds while falling"
+            }
+          ]
+        },
+        {
+          "name": "destroy_on_player_enter_beam",
+          "trigger": "when player first enters any beam line and ball has been active for less than 10 seconds",
+          "actions": [
+            {
+              "action": "gradually reduce glow intensity to zero over 2 seconds"
+            },
+            {
+              "action": "disable light casting for all beams"
+            },
+            {
+              "action": "stop generating new glitter particles"
+            }
+          ]
+        },
+        {
+          "name": "fade_out_after_exit",
+          "trigger": "when ball stops being active or rotation speed reaches zero",
+          "actions": [
+            {
+              "action": "gradually fade out remaining glow over 3 seconds"
+            },
+            {
+              "action": "destroy this object after complete fade"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing System.Collections.Generic;\n\npublic class DiscoBall : MonoBehaviour\n{\n    [Header(\"Rotation Settings\")]\n    [SerializeField] private float _rotationSpeed = 120f;\n    [SerializeField] private bool _useRandomRotation = true;\n    [SerializeField] private float _randomRotationOffset = 0.1f;\n    \n    [Header(\"Beam Settings\")]\n    [SerializeField] private int _beamCount = 8;\n    [SerializeField] private float _beamAngleSpread = 45f;\n    [SerializeField] private float _beamIntensity = 0.5f;\n    [SerializeField] private LayerMask _playerLayer = -1;\n    \n    [Header(\"Audio Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip[] _musicClips;\n    [SerializeField] private float _baseTempo = 120f;\n    [SerializeField] private float _maxTempoMultiplier = 2f;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem _glitterParticles;\n    [SerializeField] private Light[] _beamLights;\n    [SerializeField] private int _maxBeamCount = 16;\n    \n    private List<Beam> _activeBeams = new List<Beam>();\n    private int _playersInRange = 0;\n    private float _currentTempo = _baseTempo;\n    private bool _isPlayingMusic = false;\n    \n    [System.Serializable]\n    public class Beam\n    {\n        public Transform beamPoint;\n        public Light beamLight;\n        public Vector3 direction;\n        public float angleOffset;\n        \n        public Beam(Transform point, Light light, Vector3 dir, float offset)\n        {\n            beamPoint = point;\n            beamLight = light;\n            direction = dir.normalized;\n            angleOffset = offset * Mathf.Deg2Rad;\n        }\n    }\n    \n    private void Start()\n    {\n        InitializeBeams();\n        SetupAudioSource();\n        SpawnGlitterParticles();\n        \n        if (_audioSource == null)\n        {\n            _audioSource = GetComponent<AudioSource>();\n            if (_audioSource == null)\n                _audioSource = gameObject.AddComponent<AudioSource>();\n        }\n    }\n    \n    private void Update()\n    {\n        RotateBall();\n        UpdateBeams();\n        CheckForPlayers();\n        PlayMusic();\n        UpdateGlitterParticles();\n    }\n    \n    private void InitializeBeams()\n    {\n        _activeBeams.Clear();\n        \n        if (_beamLights == null)\n            _beamLights = new Light[_maxBeamCount];\n            \n        for (int i = 0; i < _beamCount; i++)\n        {\n            Vector3 direction = GetRandomDirection();\n            float angleOffset = i * _beamAngleSpread * Mathf.Deg2Rad;\n            Beam beam = new Beam(_beamLights[i].transform, _beamLights[i], direction, angleOffset);\n            \n            if (_beamPoint != null)\n                beam.beamPoint = _beamPoint.transform;\n                \n            _activeBeams.Add(beam);\n        }\n    }\n    \n    private Vector3 GetRandomDirection()\n    {\n        if (!_useRandomRotation) return Vector3.up;\n        \n        float x = Random.Range(-90f, 90f);\n        float y = Random.Range(-45f, 45f);\n        float z = Random.Range(0f, 360f);\n        \n        return new Vector3(\n            Mathf.Sin(z / 180f) * x,\n            Mathf.Cos(z / 180f) * y,\n            Mathf.Sin(x / 180f)\n        ).normalized;\n    }\n    \n    private void RotateBall()\n    {\n        if (!_useRandomRotation || _rotationSpeed <= 0f) return;\n        \n        float rotationAmount = _rotationSpeed * Time.deltaTime;\n        transform.Rotate(0, 0, rotationAmount);\n        \n        for (int i = 0; i < _activeBeams.Count; i++)\n        {\n            Vector3 angleOffset = new Vector3(\n                _activeBeams[i].angleOffset.x,\n                _activeBeams[i].angleOffset.y + rotationAmount * Mathf.Cos(_activeBeams[i].beamPoint.position.y),\n                _activeBeams[i].angleOffset.z\n            );\n            \n            _activeBeams[i].direction = Quaternion.Euler(angleOffset) * _activeBeams[i].direction;\n        }\n    }\n    \n    private void UpdateBeams()\n    {\n        for (int i = 0; i < _activeBeams.Count; i++)\n        {\n            if (_beamPoint == null) continue;\n            \n            Vector3 targetPosition = _beamPoint.position + _activeBeams[i].direction * 10f;\n            _beamPoint.Move(targetPosition, Time.deltaTime);\n            \n            // Update beam light direction\n            Quaternion rotation = Quaternion.Euler(\n                _activeBeams[i].angleOffset.x,\n                _activeBeams[i].angleOffset.y,\n                _activeBeams[i].angleOffset.z\n            );\n            _beamLight.transform.localRotation = rotation;\n        }\n    }\n    \n    private void CheckForPlayers()\n    {\n        Collider[] colliders = Physics.OverlapSphere(transform.position, 10f);\n        \n        foreach (Collider col in colliders)\n        {\n            if (col.CompareTag(\"Player\"))\n            {\n                _playersInRange++;\n                \n                // Remove from previous beam detection\n                for (int i = 0; i < _activeBeams.Count; i++)\n                {\n                    float dotProduct = Vector3.Dot(_activeBeams[i].direction, (col.transform.position - transform.position).normalized);\n                    if (dotProduct > 0.7f)\n                        break;\n                }\n            }\n        }\n    }\n    \n    private void PlayMusic()\n    {\n        if (_playersInRange <= 0 || !_isPlayingMusic) return;\n        \n        float tempoMultiplier = Mathf.Clamp01(_playersInRange / _maxTempoMultiplier);\n        _currentTempo = _baseTempo * tempoMultiplier;\n        \n        if (_musicClips == null || _musicClips.Length == 0)\n            return;\n            \n        int randomIndex = Random.Range(0, _musicClips.Length);\n        _audioSource.clip = _musicClips[randomIndex];\n        _audioSource.loop = true;\n        _audioSource.volume = 0.3f;\n        _audioSource.pitch = Mathf.Clamp01(_currentTempo / _baseTempo);\n        _audioSource.Play();\n        \n        _isPlayingMusic = true;\n    }\n    \n    private void UpdateGlitterParticles()\n    {\n        if (_glitterParticles == null || !_glitterParticles.isPlaying) return;\n        \n        for (int i = 0; i < _glitterParticles.transform.childCount; i++)\n        {\n            ParticleSystem.Particle particle = _glitterParticles.transform.GetChild(i).gameObject.GetComponent<ParticleSystem.Particle>();\n            \n            if (particle != null)\n            {\n                float speedMultiplier = _playersInRange / (_maxTempoMultiplier + 1f);\n                particle.speed *= speedMultiplier;\n                \n                Vector3 randomDirection = new Vector3(\n                    Random.Range(-0.5f, 0.5f),\n                    Random.Range(0f, 1f),\n                    Random.Range(-0.5f, 0.5f)\n                ).normalized;\n                particle.transform.Translate(randomDirection * speedMultiplier * Time.deltaTime);\n            }\n        }\n    }\n    \n    private void SpawnGlitterParticles()\n    {\n        if (_glitterParticles == null)\n        {\n            GameObject glitterPrefab = new GameObject(\"GlitterParticle\");\n            ParticleSystem ps = Instantiate(glitterPrefab, transform.position, Quaternion.identity) as ParticleSystem;\n            \n            if (ps != null)\n            {\n                var main = ps.main;\n                main.startLifetime = 0.5f;\n                main.endLifetime = 3f;\n                main.loop = true;\n                \n                var emission = main.emission;\n                emission.rateOverTime = 50f;\n                emission.maxParticlesPerSecond = 100f;\n                \n                var shape = main.shape;\n                shape.type = ParticleSystemShapeType.Sphere;\n                shape.scale = new Vector3(0.1f, 0.5f, 0.1f);\n            }\n            \n            _glitterParticles = ps;\n        }\n    }\n    \n    private void OnDestroy()\n    {\n        if (_audioSource != null)\n        {\n            _audioSource.Stop();\n            _audioSource.pitch = 1f;\n        }\n        \n        if (_isPlayingMusic && _audioSource.isPlaying)\n        {\n            _audioSource.Stop();\n        }\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 4,
+    "ir_rag_doc_names": [
+      "Animator.PlayInFixedTime (0.61)",
+      "Animator.GetIKRotation (0.60)",
+      "ParticleSystemAnimationTimeMode.FPS (0.41)",
+      "ParticleSystemShapeMultiModeValue.BurstSpread (0.40)"
+    ],
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "oneshot": {
+        "architecture": 5,
+        "fixability": 4,
+        "unity_patterns": 6,
+        "correctness": 3,
+        "completeness": 2,
+        "weighted_total": 46,
+        "justification": "Starts strong with serialized fields and headers, but becomes incomplete. Methods are somewhat organized but the implementation is cut off mid-function. Good initial structure but lacks full implementation."
+      },
+      "ir_monolithic": {
+        "architecture": 7,
+        "fixability": 8,
+        "unity_patterns": 9,
+        "correctness": 6,
+        "completeness": 5,
+        "weighted_total": 68,
+        "justification": "More comprehensive approach with clear separation of concerns. Introduces a Beam class, uses proper Unity patterns, has better error handling, and provides more complete implementation of core features."
+      },
+      "winner": "ir_monolithic",
+      "key_differences": "The IR approach provides more robust architecture, better modularization, and more complete implementation of the disco ball's complex behaviors. It breaks down the problem into more manageable components and provides clearer extension points.",
+      "advantages": "1) More modular design with a custom Beam class 2) Better use of Unity serialization 3) More comprehensive implementation of rotation, beam generation, and player detection 4) Clearer method separation and responsibility distribution"
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 2,
+    "prompt": "Create a magnet that attracts all metal-tagged objects within 15 units with exponentially increasing pull force, emits a crackling electrical sound that intensifies with attraction strength, generates sparks at contact points, and slowly dims its glow based on energy consumption tracked by an internal battery meter.",
+    "timestamp": "2026-01-08T20:54:03.267238",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections.Generic;\n\npublic class MagneticField : MonoBehaviour\n{\n    [Header(\"Magnetic Settings\")]\n    [SerializeField] private float _maxRange = 15f;\n    [SerializeField] private LayerMask _metalLayerMask = -1;\n    [SerializeField] private string[] _affectedTagNames = { \"Metal\", \"Iron\", \"Steel\" };\n    \n    [Header(\"Force Curve\")]\n    [SerializeField] private float _baseForce = 0.5f;\n    [SerializeField] private float _maxForceMultiplier = 10f;\n    [SerializeField] private AnimationCurve _forceCurve = AnimationCurve.EaseInOut(0, 1, 1, 1);\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem[] _sparkParticles;\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private Color _baseColor = Color.cyan;\n    [SerializeField] private float _colorIntensity = 0.5f;\n    [SerializeField] private AnimationCurve _glowIntensityCurve = AnimationCurve.EaseInOut(0, 1, 1, 0.3f);\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioClip[] _ crackleSounds;\n    [SerializeField] private float _minVolume = 0.1f;\n    [SerializeField] private float _maxVolume = 2f;\n    [SerializeField] private AnimationCurve _volumeCurve = AnimationCurve.Linear(0, 1, 1, 1);\n    \n    [Header(\"Battery Consumption\")]\n    [SerializeField] private float _energyPerSecond = 10f;\n    [SerializeField] private float _batteryCapacity = 100f;\n    [SerializeField] private float _dimmingSpeed = 2f;\n    [SerializeField] private bool _autoDimWhenLow = true;\n    \n    private List<MetalObject> _affectedObjects = new List<MetalObject>();\n    private Dictionary<string, float[]> _objectForceData = new Dictionary<string, float[]>();\n    private Renderer _fieldRenderer;\n    private Color _originalColor;\n    private float _totalEnergyUsed = 0f;\n    private Coroutine _audioCoroutine;\n    \n    void Start()\n    {\n        InitializeComponents();\n        SetupVisualEffects();\n        SetupAudio();\n        FindAffectedObjects();\n        \n        if (_autoDimWhenLow)\n            _fieldRenderer.color = _baseColor * _colorIntensity;\n        \n        UpdateGlow();\n    }\n    \n    void InitializeComponents()\n    {\n        _fieldRenderer = GetComponent<Renderer>();\n        _originalColor = _fieldRenderer.material.color;\n        \n        if (_audioSource == null)\n        {\n            _audioSource = GetComponent<AudioSource>();\n        }\n        \n        if (_audioSource == null)\n        {\n            _audioSource = gameObject.AddComponent<AudioSource>();\n            _audioSource.playOnAwake = false;\n            _audioSource.loop = true;\n            _audioSource.spatialBlend = 1f;\n        }\n    }\n    \n    void SetupVisualEffects()\n    {\n        if (_fieldRenderer != null)\n        {\n            _fieldRenderer.enabled = true;\n            _fieldRenderer.material.color = _baseColor * _colorIntensity;\n            \n            // Create gradient for color intensity\n            Gradient materialGradient = _fieldRenderer.material.gradient;\n            Color[] colors = new Color[3];\n            colors[0] = _baseColor * 1f; // Center point\n            colors[1] = _baseColor * (_colorIntensity + 0.5f);\n            colors[2] = _baseColor * (_colorIntensity - 0.5f);\n            \n            materialGradient.SetColors(colors, true);\n        }\n    }\n    \n    void SetupAudio()\n    {\n        if (_audioSource != null)\n        {\n            // Create crackling sound effect\n            _audioSource.clip = _crackleSounds[Random.Range(0, _crackleSounds.Length)];\n            _audioSource.loop = true;\n            _audioSource.volume = _minVolume;\n            _audioSource.spatialBlend = 1f;\n            \n            // Start playing\n            if (!_audioCoroutine.isPlaying)\n                _audioCoroutine = _audioSource.Play();\n        }\n    }\n    \n    void FindAffectedObjects()\n    {\n        _affectedObjects.Clear();\n        _objectForceData.Clear();\n        \n        Collider[] colliders = Physics.OverlapSphere(transform.position, _maxRange, _metalLayerMask);\n        foreach (Collider col in colliders)\n        {\n            if (!col.CompareTag(\"Player\") && !string.IsNullOrEmpty(col.gameObject.name))\n            {\n                MetalObject metalObject = col.GetComponent<MetalObject>();\n                \n                if (metalObject != null)\n                {\n                    if (!_affectedObjects.Contains(metalObject))\n                    {\n                        _affectedObjects.Add(metalObject);\n                        \n                        // Store tag name for force calculation\n                        string tagName = metalObject.tag;\n                        if (!_objectForceData.ContainsKey(tagName))\n                        {\n                            _objectForceData[tagName] = new float[3];\n                        }\n                        \n                        _objectForceData[tagName][0] = metalObject.distanceToCenter;\n                    }\n                }\n            }\n        }\n    }\n    \n    void Update()\n    {\n        UpdateEnergyConsumption();\n        UpdateVisualEffects();\n        UpdateAudio();\n        \n        if (_totalEnergyUsed >= _batteryCapacity && _autoDimWhenLow)\n        {\n            DimField();\n        }\n    }\n    \n    void UpdateEnergyConsumption()\n    {\n        float powerDrawn = _energyPerSecond;\n        if (powerDrawn > 0f)\n        {\n            _totalEnergyUsed += powerDrawn * Time.deltaTime;\n            \n            // Check if battery is nearly empty\n            if (_totalEnergyUsed >= _batteryCapacity - 10f)\n            {\n                DimField();\n            }\n        }\n    }\n    \n    void UpdateVisualEffects()\n    {\n        Color currentColor = _fieldRenderer.material.color;\n        \n        foreach (MetalObject metalObj in _affectedObjects)\n        {\n            float forceMultiplier = GetForceMultiplier(metalObj);\n            float distanceRatio = 1f / (metalObj.distanceToCenter + 0.1f) * _maxRange;\n            \n            // Apply force curve for intensity\n            float targetIntensity = _forceCurve.Evaluate(distanceRatio) * _colorIntensity;\n            Color newColor = currentColor * targetIntensity;\n            metalObj.SetRenderColor(newColor);\n        }\n        \n        // Update glow based on battery level\n        float batteryPercent = Mathf.Clamp01(_totalEnergyUsed / _batteryCapacity);\n        float glowLevel = 1f - (1f - batteryPercent) * _dimmingSpeed * Time.deltaTime;\n        Color currentGlow = _fieldRenderer.material.color;\n        \n        for (int i = 0; i < _fieldRenderer.material.GetColorCount(); i++)\n        {\n            Color targetGlow = currentGlow * glowLevel;\n            _fieldRenderer.material.SetColor(i, targetGlow);\n        }\n    }\n    \n    void UpdateAudio()\n    {\n        if (_audioSource == null) return;\n        \n        float volumeFactor = 1f - (_totalEnergyUsed / _batteryCapacity);\n        volumeFactor = Mathf.Clamp01(volumeFactor);\n        \n        // Apply volume curve\n        float audioVolume = _volumeCurve.Evaluate(volumeFactor) * _maxVolume;\n        _audioSource.volume = audioVolume;\n    }\n    \n    void DimField()\n    {\n        if (_autoDimWhenLow)\n        {\n            Color currentColor = _fieldRenderer.material.color;\n            Color targetColor = currentColor * 0.8f;\n            _fieldRenderer.material.SetColor(0, targetColor);\n            \n            // Gradually reduce audio\n            float newVolume = Mathf.Lerp(_audioSource.volume, _minVolume, 1f / _dimmingSpeed);\n            _audioSource.volume = newVolume;\n        }\n    }\n    \n    private float GetForceMultiplier(MetalObject metalObj)\n    {\n        if (!_objectForceData.ContainsKey(metalObj.tag))\n            return _baseForce * (_maxRange / (metalObj.distanceToCenter + 0.1f));\n        \n        // Retrieve stored force data\n        float[] forceData = _objectForceData[metalObj.tag];\n        float distanceRatio = 1f / (forceData[0] + 0.1f) * _maxRange;\n        float targetMultiplier = _baseForce * (_maxForceMultiplier * Mathf.Pow(distanceRatio, 2));\n        \n        // Apply force curve\n        return _forceCurve.Evaluate(distanceRatio) * targetMultiplier;\n    }\n    \n    private void FindClosestAffectedObject()\n    {\n        if (_affectedObjects.Count == 0)\n            return;\n            \n        MetalObject closestObj = _affectedObjects[0];\n        float minDistance = closestObj.distanceToCenter;\n        \n        foreach (MetalObject obj in _affectedObjects)\n        {\n            if (obj.distanceToCenter < minDistance)\n            {\n                minDistance = obj.distanceToCenter;\n                closestObj = obj;\n            }\n        }\n        \n        // Destroy closest object if it's not being actively held\n        bool shouldDestroy = !closestObj.isBeingHeld;\n        if (shouldDestroy && closestObj.GetComponent<MetalObject>().isBeingHeld == false)\n        {\n            Destroy(closestObj.gameObject);\n        }\n    }\n    \n    public void ActivateMagnet()\n    {\n        FindClosestAffectedObject();\n        \n        // Start or stop audio based on current volume\n        if (_audioSource != null)\n        {\n            float newVolume = Mathf.Lerp(_audioSource.volume, _minVolume, 1f / _dimmingSpeed);\n            _audioSource.volume = newVolume;\n        }\n    }\n    \n    public void DeactivateMagnet()\n    {\n        FindClosestAffectedObject();\n        \n        // Gradually increase audio\n        if (_audioSource != null)\n        {\n            float newVolume = Mathf.Lerp(_audioSource.volume, _maxVolume, 1f / _dimmingSpeed);\n            _audioSource.volume = newVolume;\n        }\n    }\n    \n    public void ResetField()\n    {\n        _affectedObjects.Clear();\n        _objectForceData.Clear();\n        \n        // Clear all visual effects\n        Color currentColor = _fieldRenderer.material.color;\n        Color targetColor = _baseColor * _colorIntensity;\n        _fieldRenderer.material.SetColor(0, targetColor);\n        \n        // Reset audio\n        if (_audioSource != null)\n        {\n            _audioSource.volume = _minVolume;\n        }\n    }\n    \n    private class MetalObject : MonoBehaviour\n    {\n        [Header(\"Metal Behavior\")]\n        [SerializeField] private float _maxDistanceFromCenter = 10f;\n        [SerializeField] private Vector3[] _attractionPoints;\n        \n        [Header(\"Visual Effects\")]\n        [SerializeField] private Renderer _objectRenderer;\n        [SerializeField] private Color _renderColor;\n        [SerializeField] private ParticleSystem[] _sparkEffects;\n        \n        [Header(\"Movement\")]\n        [SerializeField] private float _movementSpeed = 5f;\n        [SerializeField] private float _rotationSpeed = 2f;\n        [SerializeField] private bool _stickToClosestPoint = true;\n        \n        private Vector3 _targetPosition;\n        private Quaternion _targetRotation;\n        private bool _isBeingHeld = false;\n        private RendererField _rendererField;\n        \n        public void SetRenderColor(Color color)\n        {\n            if (_rendererField == null)\n                _rendererField = GetComponent<Renderer>();\n                \n            if (_rendererField != null)\n                _rendererField.material.SetColor(0, color);\n        }\n        \n        public float DistanceToCenter\n        {\n            Vector3 distanceVec = transform.position - transform.position;\n            return distanceVec.magnitude;\n        }\n        \n        public void SetBeingHeld(bool held)\n        {\n            _isBeingHeld = held;\n        }\n        \n        private void Start()\n        {\n            if (_objectRenderer == null)\n                _objectRenderer = GetComponent<Renderer>();\n                \n            if (_rendererField != null)\n            {\n                _rendererField.enabled = false;\n                _targetPosition = transform.position;\n                _targetRotation = transform.rotation;\n            }\n            \n            FindClosestAttractionPoint();\n        }\n        \n        private void Update()\n        {\n            if (!_isBeingHeld && !_stickToClosestPoint) return;\n            \n            Vector3 currentPos = transform.position;\n            float distance = DistanceToCenter;\n            \n            // Move toward closest attraction point\n            if (_attractionPoints.Length > 0)\n            {\n                Vector3 direction = (transform.position - _attractionPoints[0]).normalized;\n                direction = direction * _movementSpeed * Time.deltaTime;\n                currentPos += direction;\n                \n                transform.position = currentPos;\n                transform.rotation = Quaternion.Lerp(_targetRotation, targetRotation, _rotationSpeed * Time.deltaTime);\n            }\n            \n            // Rotate smoothly\n            transform.Rotate(0, _rotationSpeed * Time.deltaTime, 0);\n        }\n        \n        private void FindClosestAttractionPoint()\n        {\n            if (_attractionPoints.Length == 0) return;\n            \n            float closestDist = Mathf.Infinity;\n            Vector3 closestPoint = _attractionPoints[0];\n            \n            foreach (Vector3 point in _attractionPoints)\n            {\n                float dist = Vector3.Distance(transform.position, point);\n                if (dist < closestDist)\n                {\n                    closestDist = dist;\n                    closestPoint = point;\n                }\n            }\n            \n            transform.position = closestPoint;\n        }\n        \n        public void AttachToClosestPoint()\n        {\n            _stickToClosestPoint = true;\n            FindClosestAttractionPoint();\n        }\n    }\n}",
+    "ir_json": {
+      "class_name": "MagneticField",
+      "components": [
+        "Collider",
+        "AudioSource"
+      ],
+      "fields": [
+        {
+          "name": "maxRange",
+          "type": "float",
+          "default": 15
+        },
+        {
+          "name": "attractionStrength",
+          "type": "float",
+          "default": 1
+        },
+        {
+          "name": "exponentFactor",
+          "type": "float",
+          "default": 2
+        },
+        {
+          "name": "batteryCapacity",
+          "type": "int",
+          "default": 100
+        },
+        {
+          "name": "currentEnergy",
+          "type": "int",
+          "default": 100
+        },
+        {
+          "name": "baseGlowIntensity",
+          "type": "float",
+          "default": 0.5
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "attract_metal_objects",
+          "trigger": "when metal-tagged object enters magnetic range",
+          "actions": [
+            {
+              "action": "calculate attraction force based on distance and current strength"
+            },
+            {
+              "action": "apply pull force toward center of magnetic field proportional to strength"
+            },
+            {
+              "action": "increase magnetic strength exponentially as objects get closer"
+            }
+          ]
+        },
+        {
+          "name": "emit_crackling_sound",
+          "trigger": "when attracting metal object and battery has energy",
+          "actions": [
+            {
+              "action": "play crackling electrical sound effect at audio source volume proportional to attraction strength"
+            },
+            {
+              "action": "adjust sound pitch to increase frequency as objects get closer"
+            }
+          ]
+        },
+        {
+          "name": "generate_sparks_at_contact",
+          "trigger": "when metal object collides or comes in contact with magnetic field",
+          "actions": [
+            {
+              "action": "spawn electrical spark particle effect at collision point"
+            },
+            {
+              "action": "play short spark sound at contact location"
+            }
+          ]
+        },
+        {
+          "name": "consume_energy_for_magnetism",
+          "trigger": "when attracting metal object and battery has energy",
+          "actions": [
+            {
+              "action": "deduct energy from battery based on attraction power"
+            },
+            {
+              "action": "decrease current magnetic strength slightly with energy loss"
+            }
+          ]
+        },
+        {
+          "name": "dim_glow_over_time",
+          "trigger": "when no metal objects in range and battery has energy",
+          "actions": [
+            {
+              "action": "reduce glow intensity gradually over time to conserve energy"
+            }
+          ]
+        },
+        {
+          "name": "update_battery_level",
+          "trigger": "when consuming energy without attracting anything",
+          "actions": [
+            {
+              "action": "decrease current battery level based on consumption rate"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing System.Collections.Generic;\n\npublic class MagneticField : MonoBehaviour\n{\n    [Header(\"Magnetic Settings\")]\n    [SerializeField] private float _maxRange = 15f;\n    [SerializeField] private Vector3 _centerPoint = new Vector3(0, 0, 0);\n    [SerializeField] private LayerMask _metalLayersMask = -1;\n    [SerializeField] private bool _attractionOnly = true;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem _sparkParticles;\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private float _baseGlowIntensity = 0.5f;\n    [SerializeField] private Color _glowColor = Color.cyan;\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioClip[] _crackleSounds;\n    [SerializeField] private float _minPitch = 1f;\n    [SerializeField] private float _maxPitch = 10f;\n    \n    [Header(\"Energy System\")]\n    [SerializeField] private int _batteryCapacity = 100;\n    [SerializeField] private int _maxBatteryDrainRate = 20;\n    [SerializeField] private bool _enableEnergyConsumption = true;\n    \n    private List<MetalObject> _attractedObjects = new List<MetalObject>();\n    private float _currentBatteryLevel = 100f;\n    private float _batteryDrainRate = _maxBatteryDrainRate * 0.1f;\n    private Vector3 _originalGlowIntensity;\n    private float _lastCrackleTime;\n    \n    [System.Serializable]\n    public class MetalObject\n    {\n        public GameObject gameObject;\n        public Transform transform;\n        public bool isAttracted;\n        \n        public MetalObject(GameObject obj)\n        {\n            gameObject = obj;\n            transform = obj.transform;\n            isAttracted = false;\n        }\n    }\n    \n    void Start()\n    {\n        _originalGlowIntensity = _baseGlowIntensity;\n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (_sparkParticles != null && !_enableEnergyConsumption)\n            _sparkParticles.Stop();\n            \n        UpdateVisualEffects();\n    }\n    \n    void Update()\n    {\n        CheckForNewMetalObjects();\n        \n        if (_enableEnergyConsumption && _currentBatteryLevel > 0)\n            _currentBatteryLevel -= _batteryDrainRate * Time.deltaTime;\n            \n        UpdateAudioEffects();\n    }\n    \n    void OnTriggerEnter(Collider other)\n    {\n        if (other.CompareTag(\"Player\") || !other.CompareTag(\"Metal\"))\n            return;\n        \n        MetalObject metalObj = FindMetalObject(other.gameObject);\n        if (metalObj == null) return;\n        \n        if (!_attractionOnly || !string.IsNullOrEmpty(metalObj.gameObject.name))\n        {\n            AttractObject(metalObj.transform);\n            metalObj.isAttracted = true;\n        }\n    }\n    \n    void OnTriggerExit(Collider other)\n    {\n        MetalObject metalObj = FindMetalObject(other.gameObject);\n        if (metalObj != null && metalObj.isAttracted)\n        {\n            ReleaseObject(metalObj.transform);\n            metalObj.isAttracted = false;\n        }\n    }\n    \n    private MetalObject FindMetalObject(GameObject obj)\n    {\n        foreach (var potentialObj in _attractedObjects)\n        {\n            if (potentialObj.gameObject == obj)\n                return potentialObj;\n        }\n        \n        // Try to detect if the object is metal by tag or component\n        var metalTags = new List<string> { \"Metal\", \"Iron\", \"Steel\" };\n        foreach (string tag in metalTags)\n        {\n            if (obj.CompareTag(tag))\n                return new MetalObject(obj);\n        }\n        \n        // Check for common metal detection components\n        var metalDetectionComponents = obj.GetComponents<MetalDetector>();\n        if (metalDetectionComponents != null && metalDetectionComponents.Length > 0)\n        {\n            return new MetalObject(obj);\n        }\n        \n        return null;\n    }\n    \n    private void AttractObject(Transform target)\n    {\n        Vector3 directionToCenter = _centerPoint - target.position;\n        float distance = directionToCenter.magnitude;\n        \n        if (distance > _maxRange) return;\n        \n        // Calculate attraction force based on inverse square law\n        float force = (_attractionStrength * 1f / (distance * distance)) * Time.deltaTime;\n        Vector3 pullForce = (directionToCenter.normalized * force);\n        \n        ApplyForce(target, pullForce, 0f, 0f, ForceMode.Force);\n    }\n    \n    private void ReleaseObject(Transform target)\n    {\n        // Reduce attraction strength as object moves away\n        float distance = Vector3.Distance(_centerPoint, target.position);\n        if (distance > _maxRange && !target.parent.isTrigger)\n        {\n            ApplyForce(target, new Vector3(0f), 0f, 0f, ForceMode.Force);\n        }\n    }\n    \n    void CheckForNewMetalObjects()\n    {\n        Collider[] colliders = Physics.OverlapSphere(_centerPoint, _maxRange, _metalLayersMask);\n        \n        foreach (Collider col in colliders)\n        {\n            if (col.CompareTag(\"Player\") || !col.CompareTag(\"Metal\"))\n                continue;\n            \n            MetalObject metalObj = FindMetalObject(col.gameObject);\n            if (metalObj == null) continue;\n            \n            AttractObject(metalObj.transform);\n        }\n    }\n    \n    void UpdateVisualEffects()\n    {\n        float glowIntensity = _baseGlowIntensity * Mathf.Pow(1f - (_currentBatteryLevel / 100f), 2f);\n        \n        GetComponent<Renderer>().material.color = new Color(_glowColor.r, _glowColor.g, _glowColor.b, glowIntensity);\n        \n        if (_sparkParticles != null)\n            _sparkParticles.Play();\n    }\n    \n    void UpdateAudioEffects()\n    {\n        float timeSinceLastCrackle = Time.time - _lastCrackleTime;\n        float crackleInterval = 1f + Random.Range(0.5f, 2f);\n        \n        if (timeSinceLastCrackle >= crackleInterval && _crackleSounds.Length > 0)\n        {\n            PlayCracklingSound();\n            _lastCrackleTime = Time.time;\n        }\n    }\n    \n    void PlayCracklingSound()\n    {\n        int soundIndex = Random.Range(0, _crackleSounds.Length);\n        _audioSource.clip = _crackleSounds[soundIndex];\n        \n        float pitchMultiplier = Mathf.Lerp(_minPitch, _maxPitch, 1f - (_currentBatteryLevel / 100f));\n        pitchMultiplier = Mathf.Clamp01(pitchMultiplier);\n        \n        _audioSource.pitch = pitchMultiplier;\n        _audioSource.Play();\n    }\n    \n    public void DrainBatteryFully()\n    {\n        _currentBatteryLevel = 0f;\n        UpdateVisualEffects();\n        UpdateAudioEffects();\n    }\n    \n    public bool IsBatteryEmpty => _currentBatteryLevel <= 0.1f;\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(_centerPoint, _maxRange);\n        \n        if (_attractedObjects.Count > 0)\n        {\n            Gizmos.color = Color.blue;\n            \n            foreach (var metalObj in _attractedObjects)\n            {\n                if (metalObj.transform != null)\n                    Gizmos.DrawLine(metalObj.transform.position, metalObj.transform.position + Vector3.up * 2f);\n            }\n        }\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 0,
+    "ir_rag_doc_names": null,
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "raw_response": "{\n  \"oneshot\": {\n    \"architecture\": 6,\n    \"fixability\": 5,\n    \"unity_patterns\": 7,\n    \"correctness\": 4,\n    \"completeness\": 3,\n    \"weighted_total\": 52.5,\n    \"justification\": \"Strong separation of concerns with initialization methods, but incomplete implementation. Good Unity-specific patterns like serialized fields and component setup, but abruptly cuts off mid-implementation.\"\n  },\n  \"ir_monolithic\": {\n    \"architecture\": 8,\n    \"fixability\": 9,\n    \"unity_patterns\": 8,\n    \"correctness\": 7,\n    \"completeness\": 6,\n    \"weighted_total\": 71.5,\n    \"justification\": \"Extremely clean component design with clear separation of concerns. Excellent use of Unity patterns like trigger methods, serialized fields, and modular object tracking. More complete implementation with robust error handling and extension points.\"\n  },\n  \"winner\": \"ir_monolithic\",\n  \"key_differences\": \"The IR approach provides a more structured, extensible implementation with better separation of concerns and more complete error handling. It uses more idiomatic Unity patterns and provides clearer mechanisms for object interaction and energy management.\",\n  \"advantages\": \"The IR approach offers:\n  1. More robust object tracking with a dedicated MetalObject class\n  2. Better energy consumption tracking\n  3. More complete trigger and interaction mechanisms\n  4. Clearer method responsibilities\n  5. More defensive programming techniques\"\n}"
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 3,
+    "prompt": "Make an underwater bubble generator that releases bubbles of varying sizes every half second, each bubble rises with realistic physics wobble, pops with a satisfying sound when touched or reaching surface, and leaves a brief shimmer effect where it popped.",
+    "timestamp": "2026-01-08T20:56:34.342406",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections;\n\npublic class UnderwaterBubbleGenerator : MonoBehaviour\n{\n    [Header(\"Bubble Settings\")]\n    [SerializeField] private int _bubbleInterval = 1f;\n    [SerializeField] private float _maxBubbleSize = 0.5f;\n    [SerializeField] private float _minBubbleSize = 0.05f;\n    [SerializeField] private float _riseSpeed = 2f;\n    [SerializeField] private bool _useRandomSizes = true;\n    \n    [Header(\"Wobble Settings\")]\n    [SerializeField] private float _wobbleFrequency = 3f;\n    [SerializeField] private float _wobbleAmplitude = 0.1f;\n    [SerializeField] private AnimationCurve _wobbleCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);\n    \n    [Header(\"Bubble Effects\")]\n    [SerializeField] private GameObject _bubblePrefab;\n    [SerializeField] private AudioClip[] _bubbleSounds;\n    [SerializeField] private float _soundVolume = 1f;\n    [SerializeField] private float _popSoundIntensity = 0.8f;\n    \n    [Header(\"Shimmer Settings\")]\n    [SerializeField] private ParticleSystem _shimmerEffect;\n    [SerializeField] private Color _shimmerColor = Color.cyan;\n    [SerializeField] private float _shimmerDuration = 0.3f;\n    [SerializeField] private float _shimmerInterval = 1f;\n    \n    private AudioSource _audioSource;\n    private Rigidbody2D _bubbleRigidbody;\n    private Camera _mainCamera;\n    private Coroutine _bubbleCoroutine;\n    private Coroutine _shimmerCoroutine;\n    private bool _isPlayingSound = false;\n    \n    void Start()\n    {\n        _audioSource = GetComponent<AudioSource>();\n        if (_audioSource == null)\n        {\n            _audioSource = gameObject.AddComponent<AudioSource>();\n        }\n        \n        _mainCamera = Camera.main;\n        \n        if (_bubblePrefab != null)\n        {\n            _bubbleRigidbody = _bubblePrefab.GetComponent<Rigidbody2D>();\n        }\n        \n        InitializeEffects();\n    }\n    \n    void Update()\n    {\n        if (Input.GetKeyDown(KeyCode.Space))\n        {\n            GenerateBubble(true);\n        }\n        \n        UpdateShimmerEffect();\n    }\n    \n    void InitializeEffects()\n    {\n        if (_shimmerEffect != null)\n        {\n            _shimmerEffect.Stop();\n        }\n        \n        if (!_isPlayingSound && _bubbleSounds.Length > 0)\n        {\n            _audioSource.clip = _bubbleSounds[Random.Range(0, _bubbleSounds.Length)];\n            _audioSource.loop = true;\n            _audioSource.volume = _soundVolume;\n            _audioSource.Play();\n            _isPlayingSound = true;\n        }\n    }\n    \n    void UpdateShimmerEffect()\n    {\n        if (_shimmerEffect != null && !_shimmerCoroutine.isPlaying)\n        {\n            StartCoroutine(ShimmerSequence());\n        }\n    }\n    \n    IEnumerator ShimmerSequence()\n    {\n        while (true)\n        {\n            yield return new WaitForSeconds(_shimmerInterval);\n            \n            if (_shimmerEffect != null)\n            {\n                _shimmerEffect.Play();\n                \n                float duration = 0f;\n                Color startColor = _shimmerColor;\n                Color endColor = _shimmerColor;\n                \n                // Randomize shimmer start and end colors for variation\n                float h1 = Random.Range(0, 360);\n                float h2 = Random.Range(0, 360);\n                Color startShimmerColor = Color.HSLToRGB(h1 / 360f, 1f, 0.8f);\n                Color endShimmerColor = Color.HSLToRGB(h2 / 360f, 1f, 0.9f);\n                \n                duration = _shimmerDuration;\n                \n                while (duration > 0)\n                {\n                    yield return new WaitForSeconds(1f / _shimmerFrequency);\n                    float t = duration * Time.deltaTime / _shimmerDuration;\n                    float x = Mathf.LerpAngle(h1, h2, t);\n                    endColor = Color.HSLToRGB(x / 360f, 1f, 0.9f + 0.1f * Random.Range(0, 1f));\n                    \n                    _shimmerEffect.color = startShimmerColor;\n                    yield return new WaitForSeconds(_shimmerDuration * 0.5f);\n                    _shimmerEffect.color = endShimmerColor;\n                    duration -= _shimmerDuration * 0.3f;\n                }\n            }\n        }\n    }\n    \n    void GenerateBubble(bool triggerSound)\n    {\n        float bubbleSize = _useRandomSizes ? Random.Range(_minBubbleSize, _maxBubbleSize) : _maxBubbleSize;\n        \n        GameObject bubble = Instantiate(_bubblePrefab, transform.position, Quaternion.identity);\n        \n        Rigidbody2D rb = bubble.GetComponent<Rigidbody2D>();\n        if (rb == null)\n        {\n            rb = bubble.AddComponent<Rigidbody2D>();\n        }\n        \n        rb.velocity = Vector2.up * bubbleSize * 0.1f;\n        rb.angularVelocity = Random.Range(-Math.PI, Math.PI) * 0.5f;\n        \n        // Add wobble\n        rb.AddForce(Vector3.zero, ForceMode.Acceleration);\n        float wobbleAngle = Random.Range(0, 2 * Mathf.PI);\n        rb.velocity = new Vector2(\n            Mathf.Cos(wobbleAngle) * bubbleSize * 0.8f,\n            Mathf.Sin(wobbleAngle) * bubbleSize * 0.6f\n        );\n        \n        // Add random rotation for natural look\n        bubble.transform.Rotate(0, Random.Range(-30, 30), 0);\n        \n        // Create pop sound effect\n        PlayBubbleSound(triggerSound);\n        \n        _bubbleCoroutine = StartCoroutine(BubbleRisesAndPops(bubble));\n    }\n    \n    IEnumerator BubbleRisesAndPops(GameObject bubble)\n    {\n        bool popped = false;\n        \n        while (!popped)\n        {\n            float riseDistance = -2f * Time.deltaTime; // Rising upwards\n            bubble.transform.position += Vector3.up * riseDistance;\n            \n            if (bubble.transform.position.y <= 5f) // Reached surface\n            {\n                PlayBubbleSound(false);\n                CreatePopEffects(bubble);\n                popped = true;\n            }\n        }\n    }\n    \n    void PlayBubbleSound(bool trigger)\n    {\n        if (!_isPlayingSound && trigger)\n        {\n            _audioSource.Stop();\n            _isPlayingSound = false;\n            \n            if (_bubbleSounds.Length > 0)\n            {\n                _audioSource.clip = _bubbleSounds[Random.Range(0, _bubbleSounds.Length)];\n                _audioSource.loop = true;\n                _audioSource.Play();\n            }\n        }\n    }\n    \n    void CreatePopEffects(GameObject bubble)\n    {\n        // Pop sound\n        PlayBubbleSound(false);\n        \n        // Shimmer effect\n        if (_shimmerEffect != null)\n        {\n            _shimmerCoroutine = StartCoroutine(ShimmerSequence());\n        }\n        \n        // Destroy after short delay\n        StartCoroutine(DestroyAfterDelay(bubble, 0.3f));\n    }\n    \n    IEnumerator DestroyAfterDelay(GameObject obj, float delay)\n    {\n        yield return new WaitForSeconds(delay);\n        Destroy(obj);\n    }\n    \n    void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 0.5f);\n        \n        // Draw bubble size indicator\n        if (_bubblePrefab != null)\n        {\n            GameObject testBubble = Instantiate(_bubblePrefab, transform.position, Quaternion.identity);\n            Gizmos.color = Color.green;\n            Gizmos.DrawWireCube(testBubble.transform.localScale * 0.3f + Vector3.zero, Vector3.one);\n            Destroy(testBubble);\n        }\n    }\n}",
+    "ir_json": null,
+    "ir_code": null,
+    "ir_steered": false,
+    "ir_rag_docs": 0,
+    "ir_rag_doc_names": null,
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": null,
+    "error": null
+  }
+]

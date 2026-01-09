@@ -1,0 +1,728 @@
+[
+  {
+    "prompt_num": 1,
+    "prompt": "Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase.",
+    "error": "unhashable type: 'dict'",
+    "timestamp": "2026-01-08T20:18:32.564751"
+  },
+  {
+    "prompt_num": 2,
+    "prompt": "Make a gravity well that pulls nearby rigidbodies toward it with increasing force based on distance, plays a low-frequency rumble that gets louder as objects get closer, changes the light intensity based on how many objects are currently being pulled, and creates particle effects at the point where objects collide with the center, all while rotating the entire gravity well slowly.",
+    "timestamp": "2026-01-08T20:18:33.000456",
+    "oneshot_code": "using System.Collections.Generic;\nusing UnityEngine;\n\npublic class GravityWell : MonoBehaviour\n{\n    [Header(\"Gravity Settings\")]\n    [SerializeField] private float _maxPullForce = 1000f;\n    [SerializeField] private float _pullRadius = 20f;\n    [SerializeField] private bool _useInverseSquare = true;\n    [SerializeField] private LayerMask _affectedLayers = -1;\n    \n    [Header(\"Audio Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip[] _rumbleClips;\n    [SerializeField] private float _minRumbleVolume = 0.5f;\n    [SerializeField] private float _maxRumbleVolume = 2f;\n    [SerializeField] private float _rumblePitchMultiplier = 1.05f;\n    \n    [Header(\"Light Settings\")]\n    [SerializeField] private Light _wellLight;\n    [SerializeField] private Color _baseColor = Color.red;\n    [SerializeField] private float _maxLightIntensity = 10f;\n    [SerializeField] private bool _enableLight = true;\n    \n    [Header(\"Particles Settings\")]\n    [SerializeField] private ParticleSystem[] _impactParticles;\n    [SerializeField] private float _particleDelay = 0.1f;\n    [SerializeField] private int _particlesPerImpact = 50;\n    [SerializeField] private float _particleLifetime = 2f;\n    \n    [Header(\"Rotation Settings\")]\n    [SerializeField] private float _rotationSpeed = 5f;\n    [SerializeField] private Vector3 _rotationAxis = Vector3.up;\n    [SerializeField] private bool _smoothRotation = true;\n    \n    private float _currentPullForce;\n    private int _affectedObjectsCount = 0;\n    private float _basePitch = 20f;\n    private float _targetLightIntensity;\n    private Color _currentLightColor;\n    private Coroutine _audioLoop;\n    \n    void Start()\n    {\n        InitializeComponents();\n        SetupAudio();\n        SetupLight();\n        SetupParticles();\n        \n        if (_useInverseSquare)\n            _currentPullForce = _maxPullForce / (2f * _pullRadius * _pullRadius);\n        else\n            _currentPullForce = _maxPullForce;\n            \n        UpdateGravityIntensity();\n    }\n    \n    void InitializeComponents()\n    {\n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (_wellLight == null)\n            _wellLight = GetComponentInChildren<Light>();\n            \n        foreach (var particleSystem in _impactParticles)\n        {\n            if (particleSystem != null)\n                particleSystem.Stop();\n        }\n    }\n    \n    void SetupAudio()\n    {\n        if (_audioSource == null || _rumbleClips.Length == 0) return;\n        \n        _audioLoop = StartCoroutine(PlayRumbleLoop());\n    }\n    \n    void SetupLight()\n    {\n        if (!_enableLight || _wellLight == null) return;\n        \n        _currentLightColor = _baseColor;\n        _targetLightIntensity = _maxLightIntensity * (_affectedObjectsCount / 100f);\n        _wellLight.intensity = Mathf.Clamp(_targetLightIntensity, 0.1f, _maxLightIntensity);\n    }\n    \n    void SetupParticles()\n    {\n        if (_impactParticles == null || _impactParticles.Length == 0) return;\n        \n        foreach (var particleSystem in _impactParticles)\n            particleSystem.Stop();\n    }\n    \n    IEnumerator PlayRumbleLoop()\n    {\n        while (true)\n        {\n            float pitch = _basePitch * Mathf.Pow(_rumblePitchMultiplier, _affectedObjectsCount / 100f);\n            pitch = Mathf.Clamp(pitch, _basePitch, 200f);\n            \n            if (_rumbleClips.Length == 0) continue;\n            \n            int clipIndex = Random.Range(0, _rumbleClips.Length);\n            _audioSource.pitch = pitch / _basePitch;\n            _audioSource.PlayOneShot(_rumbleClips[clipIndex]);\n            \n            yield return new WaitForSeconds(Random.Range(1f, 3f));\n        }\n    }\n    \n    void Update()\n    {\n        if (_smoothRotation)\n            RotateWell();\n        \n        UpdateGravityIntensity();\n    }\n    \n    void FixedUpdate()\n    {\n        ApplyGravity();\n    }\n    \n    private void ApplyGravity()\n    {\n        Collider[] colliders = Physics.OverlapSphere(transform.position, _pullRadius, _affectedLayers);\n        \n        foreach (Collider col in colliders)\n        {\n            if (!col.CompareTag(\"Player\") && !string.IsNullOrEmpty(col.gameObject.name)) // avoid affecting the well itself\n            {\n                Rigidbody rb = col.GetComponent<Rigidbody>();\n                \n                if (rb != null)\n                {\n                    float distance = Vector3.Distance(transform.position, col.center);\n                    float force = _currentPullForce * (1f / (distance + 0.01f));\n                    \n                    if (_useInverseSquare && distance > 0)\n                        force /= (distance * distance);\n                    \n                    rb.AddForce(Vector3.down * force, ForceMode.Force);\n                }\n            }\n        }\n    }\n    \n    private void UpdateGravityIntensity()\n    {\n        _affectedObjectsCount = Physics.OverlapSphere(transform.position, _pullRadius, _affectedLayers).Length;\n        \n        if (_enableLight && _wellLight != null)\n        {\n            float intensity = _targetLightIntensity * (1f + 0.5f * Mathf Sin(Time.time * 2f));\n            _wellLight.intensity = Mathf.Clamp(intensity, 0.1f, _maxLightIntensity);\n            \n            if (_currentLightColor != _wellLight.color)\n                _wellLight.color = new Color(_currentLightColor.r, _currentLightColor.g, _currentLightColor.b, _currentLightColor.a * _wellLight.intensity / _maxLightIntensity);\n        }\n    }\n    \n    private void RotateWell()\n    {\n        transform.Rotate(Vector3.up * _rotationSpeed * Time.deltaTime, true);\n        \n        if (_smoothRotation)\n            transform.Rotate(Vector3.up * _rotationAxis * _rotationSpeed * Time.deltaTime, false);\n    }\n    \n    public void AddObjectToGravity(Collider obj)\n    {\n        if (obj.CompareTag(\"Player\"))\n            ApplyGravity();\n    }\n    \n    private void OnTriggerEnter(Collider other)\n    {\n        // Handle object entering the well\n        if (_impactParticles != null && other.transform.position.Distance(transform.position) <= 0.1f)\n        {\n            StartCoroutine(StartParticleEffects(other));\n        }\n    }\n    \n    private IEnumerator StartParticleEffects(Collider other)\n    {\n        foreach (var particleSystem in _impactParticles)\n        {\n            particleSystem.Play();\n            yield return new WaitForSeconds(_particleDelay);\n            particleSystem.Stop();\n        }\n        \n        yield return new WaitForSeconds(0.5f); // wait for particles to fade\n    }\n    \n    public void ResetGravity()\n    {\n        _currentPullForce = _maxPullForce;\n        _affectedObjectsCount = 0;\n        UpdateGravityIntensity();\n        \n        if (_audioLoop != null)\n            StopCoroutine(_audioLoop);\n            \n        foreach (var particleSystem in _impactParticles)\n            if (particleSystem.isPlaying)\n                particleSystem.Stop();\n    }\n}",
+    "ir_json": null,
+    "ir_code": null,
+    "ir_steered": false,
+    "ir_rag_docs": 0,
+    "ir_rag_doc_names": null,
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": null,
+    "error": null
+  },
+  {
+    "prompt_num": 3,
+    "prompt": "Build a script that turns any object into a musical instrument - when you collide with it, it plays a note based on where you hit it (top plays high notes, bottom plays low notes), the object's color shifts to match the note's frequency, it vibrates with the sound, and leaves a trail of particles that fade out over 2 seconds.",
+    "timestamp": "2026-01-08T20:20:39.656768",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections;\n\npublic class MusicalInstrument : MonoBehaviour\n{\n    [Header(\"Audio Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private int _minPitch = -3;\n    [SerializeField] private int _maxPitch = 8;\n    [SerializeField] private float _baseVolume = 0.5f;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private Color _originalColor;\n    [SerializeField] private bool _enableColorShift = true;\n    [SerializeField] private AnimationCurve _pitchToFrequency = AnimationCurve.EaseInOut(0, 1, 1, 1);\n    [SerializeField] private AnimationCurve _pitchToScale = AnimationCurve.Linear(-3, 0.5f, 8, 2f);\n    \n    [Header(\"Particle Effects\")]\n    [SerializeField] private ParticleSystem _particlePrefab;\n    [SerializeField] private float _trailDuration = 2f;\n    [SerializeField] private float _trailSpawnRate = 100f;\n    [SerializeField] private float _trailLifetime = 0.5f;\n    \n    private int _currentPitch;\n    private Color _currentColor;\n    private bool _isPlaying = false;\n    private Coroutine _trailCoroutine;\n    private Rigidbody _rigidbody;\n    private Collider _collider;\n    \n    void Start()\n    {\n        _rigidbody = GetComponent<Rigidbody>();\n        _collider = GetComponent<Collider>();\n        \n        if (_audioSource == null)\n            _audioSource = gameObject.AddComponent<AudioSource>();\n            \n        if (_originalColor != Color.white)\n            _currentColor = _originalColor;\n        else\n            _currentColor = Color.white;\n    }\n    \n    void OnTriggerEnter(Collider other)\n    {\n        PlayNote();\n        StartTrailEffect();\n    }\n    \n    void OnTriggerExit(Collider other)\n    {\n        StopTrailEffect();\n    }\n    \n    void PlayNote()\n    {\n        if (_isPlaying) return;\n        \n        _isPlaying = true;\n        \n        // Calculate target pitch based on collision point\n        Vector3 hitPoint = transform.position + _collider.bounds.center - other.transform.position;\n        float pitchOffset = Vector3.Dot(hitPoint.normalized, _collider.bounds.normal);\n        int notePitch = (int)(pitchOffset * (_maxPitch - _minPitch) + _minPitch);\n        \n        // Clamp pitch to valid range\n        if (notePitch < _minPitch)\n            notePitch = _minPitch;\n        else if (notePitch > _maxPitch)\n            notePitch = _maxPitch;\n            \n        _currentPitch = notePitch;\n        \n        // Calculate target frequency and amplitude\n        float targetFrequency = GetTargetFrequency(notePitch);\n        float volume = _baseVolume * Mathf.Lerp(0.1f, 1f, _pitchToScale[notePitch]);\n        float pitchMultiplier = (float)Math.Pow(2, notePitch / 12f);\n        \n        // Apply audio settings\n        _audioSource.pitch = pitchMultiplier;\n        _audioSource.volume = volume;\n        _audioSource.Play();\n    }\n    \n    private float GetTargetFrequency(int pitch)\n    {\n        return _baseFrequency * Mathf.Lerp(0.5f, 8f, (float)pitch / 12f);\n    }\n    \n    void StartTrailEffect()\n    {\n        if (_particlePrefab == null)\n            _particlePrefab = CreateDefaultParticleSystem();\n            \n        GameObject particleObject = new GameObject(\"PitchTrail\");\n        particleObject.transform.SetParent(transform);\n        particleObject.transform.localPosition = Vector3.zero;\n        \n        ParticleSystem trailParticles = _particlePrefab;\n        trailParticles.Play();\n        \n        // Spawn main trail\n        Trailtrail trail = trailParticles.main;\n        trail.startLifetime = 0f;\n        trail.endLifetime = _trailDuration;\n        trail.startSpeed = 10f;\n        trail.endSpeed = 1f;\n        trail.startSize = 0.01f;\n        trail.endSize = 0.05f;\n        \n        // Spawn pitch indicator particles\n        Trailindicator indicator = trailParticles.pitch;\n        indicator.enabled = true;\n        indicator.maxParticles = 20f;\n        indicator.startLifetime = 0f;\n        indicator.endLifetime = _trailDuration * 2f;\n        indicator.startSpeed = 5f;\n        indicator.endSpeed = 1f;\n        indicator.startSize = 0.01f;\n        indicator.endSize = 0.03f;\n        \n        // Spawn color-changing particles\n        Trailcolor changing = trailParticles.color;\n        changing.enabled = true;\n        changing.maxParticles = 20f;\n        changing.startLifetime = 0f;\n        changing.endLifetime = _trailDuration * 1.5f;\n        changing.startSpeed = 3f;\n        changing.endSpeed = 1f;\n        changing.startSize = 0.01f;\n        changing.endSize = 0.03f;\n        \n        // Set color gradient based on pitch\n        float[] pitchColors = new Color[_currentPitch < 0 ? 5 : 2];\n        for (int i = 0; i < pitchColors.Length; i++)\n            pitchColors[i] = Color.Lerp(Color.red, Color.green, (float)i / Math.Abs(_currentPitch));\n        \n        changing.startColor = pitchColors[0];\n        changing.endColor = pitchColors[pitchColors.Length - 1];\n    }\n    \n    private ParticleSystem CreateDefaultParticleSystem()\n    {\n        GameObject particleObj = new GameObject(\"PitchParticles\");\n        ParticleSystem trailParticles = particleObj.AddComponent<ParticleSystem>();\n        \n        // Main trail\n        trailParticles.AddComponentInChildren<Trailtrail>(1f);\n        trailParticles.main.startLifetime = 0f;\n        trailParticles.main.endLifetime = 2f;\n        trailParticles.main.startSpeed = 10f;\n        trailParticles.main.endSpeed = 1f;\n        trailParticles.main.startSize = 0.01f;\n        trailParticles.main.endSize = 0.05f;\n        \n        // Pitch indicator\n        trailParticles.AddComponentInChildren<Trailindicator>(2f);\n        trailParticles.pitch.maxParticles = 20f;\n        trailParticles.pitch.startLifetime = 0f;\n        trailParticles.pitch.endLifetime = 3f;\n        trailParticles.pitch.startSpeed = 5f;\n        trailParticles.pitch.endSpeed = 1f;\n        \n        // Color changing\n        trailParticles.AddComponentInChildren<Trailcolor>(2f);\n        trailParticles.color.maxParticles = 20f;\n        trailParticles.color.startLifetime = 0f;\n        trailParticles.color.endLifetime = 3f;\n        trailParticles.color.startSpeed = 3f;\n        trailParticles.color.endSpeed = 1f;\n        \n        return trailParticles;\n    }\n    \n    void StopTrailEffect()\n    {\n        if (_trailCoroutine != null)\n        {\n            StopCoroutine(_trailCoroutine);\n            _trailCoroutine = null;\n        }\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = _currentColor;\n        \n        // Draw pitch indicator\n        Vector3[] hitPoints = new Vector3[8];\n        int[] pointIndices = { 0, 1, 2, 3 };\n        \n        for (int i = 0; i < pointIndices.Length; i++)\n        {\n            float offset = Vector3.Dot(hitPoint.normalized * _collider.bounds.size / 2f, \n                Quaternion.Euler(0, 90f, 0) * _collider.bounds.normal);\n            hitPoints[i] = transform.position + (hitPoint.normalized * offset);\n        }\n        \n        // Draw arrows for each note\n        for (int i = 0; i < pointIndices.Length; i++)\n        {\n            Gizmos.color = Color.yellow;\n            Gizmos.DrawRay(hitPoints[i], Vector3.up * 0.5f);\n            \n            float pitchOffset = Vector3.Dot(hitPoints[i].normalized, \n                _collider.bounds.normal) + (pointIndices[i] % 2 == 1 ? 0.5f : -0.5f);\n            int notePitch = Mathf.RoundToInt(pitchOffset * (_maxPitch - _minPitch) + _minPitch);\n            \n            Gizmos.color = Color.red;\n            Gizmos.DrawWireSphere(hitPoints[i], 0.1f);\n            \n            // Draw pitch number\n            Vector3 arrowDirection = (Vector3,right: true).normalized;\n            Gizmos.matrix = Quaternion.Euler(0, 90f, 0) * Quaternion.identity;\n            Gizmos.DrawLine(hitPoints[i] + arrowDirection * 0.2f, \n                hitPoints[i] + arrowDirection * 0.8f);\n            \n            Gizmos.color = Color.green;\n            Gizmos.DrawText(\"P\" + notePitch, hitPoints[i] + Vector3.up * 0.1f);\n        }\n    }\n    \n    [System.Serializable]\n    public class Trailtrail : ParticleSystemComponent\n    {\n        public float startSize = 0.01f;\n        public float endSize = 0.05f;\n        public float startLifetime = 0f;\n        public float endLifetime = 2f;\n        public float startSpeed = 10f;\n        public float endSpeed = 1f;\n        \n        private Vector3[] _startPoints;\n        private ParticleData[] _particles;\n        \n        public Trailtrail trailTrail : require Component<Trailtrail>();\n        \n        void Awake()\n        {\n            _startPoints = new Vector3[trailTrail.count];\n            trailTrail.GetStartPoints(_startPoints);\n            \n            CreateParticles();\n        }\n        \n        void CreateParticles()\n        {\n            ParticleData[] particleData = new ParticleData[trailTrail.count];\n            \n            for (int i = 0; i < trailTrail.count; i++)\n            {\n                float lifetime = Mathf.Lerp(startLifetime, endLifetime, \n                    trailTrail.startLifetime * trailTrail.count + trailTrail.endLifetime * i / trailTrail.count);\n                particleData[i] = new ParticleData\n                {\n                    position = _startPoints[i],\n                    velocity = trailTrail.velocity * lifetime,\n                    lifetime = lifetime\n                };\n            }\n            \n            _particles = trailTrail.CreateParticles(particleData);\n        }\n        \n        void OnDrawGizmos()\n        {\n            Gizmos.color = Color.white;\n            for (int i = 0; i < trailTrail.count; i++)\n            {\n                Vector3 start = _startPoints[i];\n                Vector3 end = start + _particles[i].velocity;\n                Gizmos.DrawLine(start, end);\n                \n                Gizmos.color = Color.yellow;\n                Gizmos.DrawSphere(end, 0.01f);\n            }\n        }\n    }\n    \n    [System.Serializable]\n    public class Trailindicator : ParticleSystemComponent\n    {\n        public int maxParticles = 20f;\n        public float startLifetime = 0f;\n        public float endLifetime = 3f;\n        public float startSpeed = 5f;\n        public float endSpeed = 1f;\n        \n        private Vector3[] _startPoints;\n        private ParticleData[] _particles;\n        \n        public Trailindicator indicatorIndicator : require Component<indicatorIndicator>();\n        \n        void Awake()\n        {\n            _startPoints = new Vector3[2];\n            indicatorIndicator.GetStartPoints(_startPoints);\n            \n            CreateParticles();\n        }\n        \n        void CreateParticles()\n        {\n            ParticleData[] particleData = new ParticleData[2];\n            \n            for (int i = 0; i < 2; i++)\n            {\n                float lifetime = Mathf.Lerp(startLifetime, endLifetime, \n                    indicatorIndicator.startLifetime * indicatorIndicator.count + indicatorIndicator.endLifetime * i / indicatorIndicator.count);\n                particleData[i] = new ParticleData\n                {\n                    position = _startPoints[i],\n                    velocity = indicatorIndicator.velocity * lifetime,\n                    lifetime = lifetime\n                };\n            }\n            \n            _particles = indicatorIndicator.CreateParticles(particleData);\n        }\n        \n        void OnDrawGizmos()\n        {\n            Gizmos.color = Color.yellow;\n            for (int i = 0; i < _particles.Length; i++)\n            {\n                ParticleData particle = _particles[i];\n                Vector3 end = particle.position + particle.velocity;\n                Gizmos.DrawLine(particle.position, end);\n                \n                Gizmos.color = Color.red;\n                Gizmos.DrawWireSphere(end, 0.02f);\n            }\n        }\n    }\n    \n    [System.Serializable]\n    public class Trailcolor : ParticleSystemComponent\n    {\n        public int maxParticles = 20f;\n        public float startLifetime = 0f;\n        public float endLifetime = 3f;\n        public float startSpeed = 3f;\n        public float endSpeed = 1f;\n        \n        private Vector3[] _startPoints;\n        private ParticleData[] _particles;\n        \n        public Trailcolor colorColor : require Component<colorColor>();\n        \n        void Awake()\n        {\n            _startPoints = new Vector3[2];\n            colorColor.GetStartPoints(_startPoints);\n            \n            CreateParticles();\n        }\n        \n        void CreateParticles()\n        {\n            ParticleData[] particleData = new ParticleData[2];\n            \n            for (int i = 0; i < 2; i++)\n            {\n                float lifetime = Mathf.Lerp(startLifetime, endLifetime, \n                    colorColor.startLifetime * colorColor.count + colorColor.endLifetime * i / colorColor.count);\n                particleData[i] = new ParticleData\n                {\n                    position = _startPoints[i],\n                    velocity = colorColor.velocity * lifetime,\n                    lifetime = lifetime\n                };\n            }\n            \n            _particles = colorColor.CreateParticles(particleData);\n        }\n        \n        void OnDrawGizmos()\n        {\n            Gizmos.color = Color.white;\n            for (int i = 0; i < _particles.Length; i++)\n            {\n                ParticleData particle = _particles[i];\n                Vector3 end = particle.position + particle.velocity;\n                Gizmos.DrawLine(particle.position, end);\n                \n                // Draw gradient color\n                float t = Mathf.Lerp(0f, 1f, particle.lifetime / colorColor.endLifetime);\n                Color gradientColor = Color.Lerp(colorColor.startColor, colorColor.endColor, t);\n                Gizmos.color = gradientColor;\n                Gizmos.DrawWireSphere(end, 0.01f);\n            }\n        }\n    }\n    \n    [System.Serializable]\n    public class colorColor\n    {\n        public Vector3[] startPoints;\n        public ParticleData[] particles;\n        \n        private ParticleSystem _particleSystem;\n        \n        void Awake()\n        {\n            if (startPoints == null)\n                startPoints = new Vector3[2];\n            \n            CreateParticles();\n        }\n        \n        void CreateParticles()\n        {\n            _particleSystem = gameObject.AddComponent<ParticleSystem>();\n            _particleSystem.main.startLifetime = 0f;\n            _particleSystem.main.endLifetime = 2f;\n            _particleSystem.main.startSpeed = 5f;\n            _particleSystem.main.endSpeed = 1f;\n            \n            var main = _particleSystem.main;\n            main.startSize = 0.01f;\n            main.endSize = 0.03f;\n            \n            var shapeOver = _particleSystem.shapeOver;\n            shapeOver.enabled = true;\n            shapeOver.time = 2f;\n            \n            var shape = _particleSystem.shape;\n            shape.enabled = true;\n            shape.time = 1f;\n            shape.startRadius = 0.01f;\n            shape.endRadius = 0.03f;\n            \n            var velocityOver = _particleSystem.velocityOver;\n            velocityOver.enabled = true;\n            velocityOver.time = 2f;\n            \n            var velocity = _particleSystem.velocity;\n            velocity.enabled = true;\n            velocity.startSpeed = startPoints[0].x + startPoints[1].x;\n            velocity.endSpeed = 1f;\n        }\n        \n        void GetStartPoints(Vector3[] points)\n        {\n            for (int i = 0; i < points.Length; i++)\n                points[i] = transform.position + (startPoints[i] * 0.5f);\n        }\n    }\n    \n    [System.Serializable]\n    public class indicatorIndicator\n    {\n        public float startLifetime;\n        public float endLifetime;\n        public Vector3[] startPoints;\n        public Vector3[] targetPositions;\n        \n        void GetStartPoints(Vector3[] points)\n        {\n            for (int i = 0; i < points.Length; i++)\n                points[i] = transform.position + (startPoints[i] * 0.5f);\n        }\n    }\n    \n    [System.Serializable]\n    public class colorColorData\n    {\n        public float startLifetime;\n        public Color startColor;\n        public Color endColor;\n        \n        void GetStartPoints(Vector3[] points)\n        {\n            for (int i = 0; i < points.Length; i++)\n                points[i] = transform.position + (startPoints[i] * 0.5f);\n        }\n    }\n    \n    [System.Serializable]\n    public class colorGradient\n    {\n        public float[] startColors;\n        public float[] endColors;\n        \n        void GetStartPoints(Vector3[] points)\n        {\n            for (int i = 0; i < points.Length; i++)\n                points[i] = transform.position + (startColors[i] * 0.5f);\n        }\n    }\n    \n    [System.Serializable]\n    public class pitchData\n    {\n        public int pitch;\n        public float frequency;\n        public float amplitude;\n        \n        public pitchData(int p, float f, float a)\n        {\n            pitch = p;\n            frequency = f;\n            amplitude = a;\n        }\n    }\n}",
+    "ir_json": {
+      "class_name": "MusicalInstrument",
+      "components": [
+        "Collider",
+        "AudioSource",
+        "ParticleSystem",
+        "Rigidbody"
+      ],
+      "fields": [
+        {
+          "name": "baseNoteFrequency",
+          "type": "float",
+          "default": 440
+        },
+        {
+          "name": "noteRange",
+          "type": "float",
+          "default": 3
+        },
+        {
+          "name": "particleCount",
+          "type": "int",
+          "default": 50
+        },
+        {
+          "name": "vibrationIntensity",
+          "type": "float",
+          "default": 1.5
+        },
+        {
+          "name": "baseColor",
+          "type": "Color",
+          "default": "#FFFFFF"
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "play_note_on_collision",
+          "trigger": "when object collides with player or solid object",
+          "actions": [
+            {
+              "action": "calculate impact point relative to center"
+            },
+            {
+              "action": "adjust note frequency based on vertical position of impact (higher = higher pitch)"
+            },
+            {
+              "action": "play the calculated note using audio source"
+            },
+            {
+              "action": "set particle system color to match current note frequency (convert frequency to hue range 0-360)"
+            },
+            {
+              "action": "trigger vibration effect on object with intensity matching note pitch"
+            },
+            {
+              "action": "start particle emission at collision point with specified count and duration"
+            }
+          ]
+        },
+        {
+          "name": "fade_particles",
+          "trigger": "when particles start emitting from musical instrument",
+          "actions": [
+            {
+              "action": "gradually reduce transparency of all emitted particles over 2 seconds"
+            },
+            {
+              "action": "stop particle emission when fade is complete"
+            }
+          ]
+        },
+        {
+          "name": "continuous_playback",
+          "trigger": "every few seconds while object remains active",
+          "actions": [
+            {
+              "action": "play random note from predefined musical scale range"
+            },
+            {
+              "action": "shift color to hue matching new note pitch"
+            },
+            {
+              "action": "emit small burst of particles"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing System.Collections;\nusing System.Collections.Generic;\n\npublic class MusicalInstrument : MonoBehaviour\n{\n    [Header(\"Audio Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private float _baseNoteFrequency = 440f;\n    [SerializeField] private float _noteRange = 3f;\n    [SerializeField] private float _volume = 1f;\n    \n    [Header(\"Particle System\")]\n    [SerializeField] private ParticleSystem _particleSystem;\n    [SerializeField] private int _particleCount = 50;\n    [SerializeField] private float _emissionDuration = 2f;\n    [SerializeField] private AnimationCurve _fadeCurve = AnimationCurve.EaseInOut(0, 1, 1, 0);\n    \n    [Header(\"Vibration Settings\")]\n    [SerializeField] private Transform _vibrationPoint;\n    [SerializeField] private float _maxVibrationForce = 100f;\n    [SerializeField] private float _vibrationDuration = 0.5f;\n    \n    [Header(\"Color Settings\")]\n    [SerializeField] private Color _baseColor = Color.white;\n    [SerializeField] private AnimationCurve _colorTransition = AnimationCurve.EaseInOut(0, 1, 1, 0);\n    \n    [Header(\"Trigger Settings\")]\n    [SerializeField] private bool _continuousPlay = true;\n    [SerializeField] private float _updateInterval = 1f;\n    \n    private List<NoteData> _notesPlayed = new List<NoteData>();\n    private Coroutine _playCoroutine;\n    \n    private enum NoteState\n    {\n        Normal,\n        Playing,\n        Fading,\n        Stopped\n    }\n    \n    public NoteData LastNote\n    {\n        get { return _notesPlayed.Count > 0 ? _notesPlayed[_notesPlayed.Count - 1] : null; }\n    }\n    \n    private void Start()\n    {\n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (!_continuousPlay || !_audioSource.isPlaying)\n        {\n            PlayRandomNote();\n        }\n        \n        SetupVibrationPoint();\n    }\n    \n    private void Update()\n    {\n        if (_playCoroutine != null && !_continuousPlay)\n        {\n            PlayRandomNote();\n        }\n        \n        if (ContinuousNotePlays)\n        {\n            PlayNextNote();\n        }\n    }\n    \n    public void PlayNote(float frequency, float pitchMultiplier = 1f)\n    {\n        PlayNoteWithColor(frequency, pitchMultiplier);\n    }\n    \n    public void PlayNote(float frequency)\n    {\n        PlayNoteWithColor(frequency, 1f);\n    }\n    \n    private NoteData PlayNoteWithColor(float frequency, float pitchMultiplier)\n    {\n        NoteData note = new NoteData\n        {\n            Frequency = frequency,\n            PitchMultiplier = pitchMultiplier,\n            Color = _baseColor\n        };\n        \n        PlayNote(note);\n        \n        return note;\n    }\n    \n    private void PlayNote(NoteData note)\n    {\n        if (_audioSource == null || !ContinuousNotePlays) return;\n        \n        float targetVolume = _volume * note.PitchMultiplier;\n        _audioSource.volume = Mathf.Clamp(targetVolume, 0f, 1f);\n        \n        // Apply color transition\n        Color currentColor = note.Color;\n        int start = 0;\n        int end = _colorTransition.length - 1;\n        \n        float t = 0f;\n        while (t < 1f)\n        {\n            t += Time.deltaTime * 10f;\n            if (t >= 1f) break;\n            \n            note.Color = _colorTransition.Evaluate(start, end, t);\n            start++;\n        }\n        \n        // Play the note\n        _audioSource.PlayOneShot(new AudioClip(\"Note\", pitchMultiplier * targetVolume));\n        \n        // Store note data\n        _notesPlayed.Add(note);\n        \n        switch (note.State)\n        {\n            case NoteState.Normal:\n                note.State = NoteState.Playing;\n                break;\n            case NoteState.Playing:\n                note.State = NoteState.Fading;\n                break;\n            case NoteState.Fading:\n                note.State = NoteState.Stopped;\n                break;\n        }\n        \n        return note;\n    }\n    \n    private void PlayRandomNote()\n    {\n        float minFrequency = _baseNoteFrequency - (_noteRange * 1.5f);\n        float maxFrequency = _baseNoteFrequency + (_noteRange * 1.5f);\n        float randomFrequency = Random.Range(minFrequency, maxFrequency) / 440f;\n        \n        PlayNote(randomFrequency);\n    }\n    \n    private void SetupVibrationPoint()\n    {\n        if (_vibrationPoint == null)\n            _vibrationPoint = transform;\n            \n        if (_vibrationPoint != null)\n        {\n            Rigidbody rb = _vibrationPoint.GetComponent<Rigidbody>();\n            if (rb != null)\n            {\n                Vector3 initialVelocity = new Vector3(\n                    Random.Range(-_maxVibrationForce, _maxVibrationForce),\n                    0f,\n                    Random.Range(-_maxVibrationForce, _maxVibrationForce)\n                );\n                \n                // Apply random force\n                rb.AddForce(initialVelocity * (1f + Random.Range(-0.5f, 0.5f)));\n            }\n        }\n    }\n    \n    private void PlayNextNote()\n    {\n        if (_audioSource.isPlaying && _notesPlayed.Count > 0)\n        {\n            NoteData lastNote = LastNote;\n            float targetVolume = _volume * lastNote.PitchMultiplier;\n            \n            // Play next note in sequence\n            int index = _notesPlayed.IndexOf(lastNote) + 1;\n            if (index >= _notesPlayed.Count)\n                index = 0;\n            \n            NoteData nextNote = new NoteData\n            {\n                Frequency = _baseNoteFrequency * (index / _notesPlayed.Count),\n                PitchMultiplier = 1f,\n                Color = _baseColor\n            };\n            \n            PlayNote(nextNote);\n        }\n    }\n    \n    public void StopAllNotes()\n    {\n        if (_playCoroutine != null)\n        {\n            StopCoroutine(_playCoroutine);\n            _playCoroutine = null;\n        }\n        \n        _notesPlayed.Clear();\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 0.5f);\n        \n        if (_vibrationPoint != null)\n        {\n            Gizmos.color = Color.red;\n            Gizmos.DrawLine(_vibrationPoint.position, _vibrationPoint.position + transform.forward * 2f);\n        }\n    }\n    \n    private bool ContinuousNotePlays\n    {\n        get { return _continuousPlay; }\n    }\n    \n    private class NoteData\n    {\n        public float Frequency;\n        public float PitchMultiplier;\n        public Color Color;\n        public NoteState State = NoteState.Normal;\n        \n        public NoteData(float frequency, float pitchMultiplier = 1f)\n        {\n            Frequency = frequency;\n            PitchMultiplier = pitchMultiplier;\n            Color = _baseColor;\n        }\n    }\n    \n    [System.Serializable]\n    public class SoundClip\n    {\n        public AudioClip clip;\n        public float pitch;\n        \n        public SoundClip(AudioClip clip, float pitch)\n        {\n            this.clip = clip;\n            this.pitch = pitch;\n        }\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 10,
+    "ir_rag_doc_names": [
+      "AudioSource.GamepadSpeakerSupportsOutputType (0.64)",
+      "ParticleSystem.GetPlaybackState (0.63)",
+      "ParticleSystem.NoiseModule (0.63)",
+      "AudioSource.GetSpectrumData (0.63)",
+      "ParticleSystem.TextureSheetAnimationModule (0.63)",
+      "AudioSource.PlayOnGamepad (0.62)",
+      "ParticleSystemShapeMultiModeValue.BurstSpread (0.42)",
+      "ParticleSystemShapeMultiModeValue.Loop (0.41)",
+      "ParticleSystemShapeMultiModeValue.PingPong (0.40)",
+      "LightEditor.Settings.bounceIntensity (0.16)"
+    ],
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "oneshot": {
+        "architecture": 7,
+        "fixability": 6,
+        "unity_patterns": 8,
+        "correctness": 5,
+        "completeness": 4,
+        "weighted_total": 58,
+        "justification": "Strong Unity-specific structure with clear serialized fields and component separation. Good use of lifecycle methods like Start() and OnTriggerEnter(). Some methods are well-defined, but the implementation is incomplete and has some unfinished code segments."
+      },
+      "ir_monolithic": {
+        "architecture": 5,
+        "fixability": 4,
+        "unity_patterns": 6,
+        "correctness": 3,
+        "completeness": 3,
+        "weighted_total": 45,
+        "justification": "Over-engineered approach with complex state management. Creates unnecessary complexity with enum and list tracking. Loses focus on the original requirements by introducing too many abstract concepts."
+      },
+      "winner": "oneshot",
+      "key_differences": "OneShot approach maintains clearer focus on core musical instrument mechanics, uses more direct Unity patterns, and provides a more straightforward implementation strategy.",
+      "advantages": "Better separation of concerns, more intuitive serialized field usage, closer alignment with Unity component design principles, and a more readable overall structure that makes incremental development easier."
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 4,
+    "prompt": "Create a creature that has 5 states: idle (sits still, plays ambient breathing), curious (slowly approaches player if within 10 units, plays questioning sound), scared (runs away from player, plays panic sound, color turns red), aggressive (chases player, plays roar, color turns dark, applies force toward player), and exhausted (stops moving, plays tired sound, color fades to gray). It transitions between states based on player distance and how long it's been in current state.",
+    "timestamp": "2026-01-08T20:23:34.790699",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections.Generic;\n\npublic class BehaviorStateMachine : MonoBehaviour\n{\n    [System.Serializable]\n    public enum States\n    {\n        Idle,\n        Curious,\n        Scared,\n        Aggressive,\n        Exhausted\n    }\n\n    [Header(\"Behavior Settings\")]\n    [SerializeField] private float _stateTransitionSpeed = 2f;\n    [SerializeField] private bool _autoReturnToIdle = true;\n    [SerializeField] private float _idleTimeout = 30f;\n\n    [Header(\"State Transitions\")]\n    [SerializeField] private List<TriggerCondition> _transitionConditions = new List<TriggerCondition>();\n    [SerializeField] private List<TransitionAction> _transitionActions = new List<TransitionAction>();\n\n    [Header(\"Idle Behavior\")]\n    [SerializeField] private Transform _idleTarget;\n    [SerializeField] private AudioClip[] _ambientSounds;\n\n    [Header(\"Curious Behavior\")]\n    [SerializeField] private float _curiosityRadius = 10f;\n    [SerializeField] private Transform _curiosityTarget;\n    [SerializeField] private AudioClip[] _questioningSounds;\n\n    [Header(\"Scared Behavior\")]\n    [SerializeField] private float _scaredTimeout = 15f;\n    [SerializeField] private LayerMask _obstacleLayerMask = -1;\n    [SerializeField] private AudioClip[] _panicSounds;\n\n    [Header(\"Aggressive Behavior\")]\n    [SerializeField] private float _aggressionRadius = 8f;\n    [SerializeField] private Transform _aggressionTarget;\n    [SerializeField] private AudioClip[] _roaringSounds;\n\n    [Header(\"Exhausted Behavior\")]\n    [SerializeField] private float _exhaustionTimeout = 20f;\n    [SerializeField] private AudioClip[] _tiredSounds;\n\n    private States _currentState = States.Idle;\n    private bool _isReturningToIdle = false;\n    private float _timeSpentInCurrentState = 0f;\n    private float _lastTransitionTime;\n\n    private void Start()\n    {\n        _lastTransitionTime = Time.time;\n        _currentTime = 0f;\n    }\n\n    private void Update()\n    {\n        if (_isReturningToIdle)\n        {\n            HandleAutoReturnToIdle();\n            return;\n        }\n\n        _timeSpentInCurrentState += Time.deltaTime;\n        \n        if (!_transitionConditions.Any(cond => cond.IsTriggered()))\n        {\n            _timeSpentInCurrentState = 0f;\n        }\n\n        CheckForStateTransitions();\n    }\n\n    private void HandleAutoReturnToIdle()\n    {\n        if (_currentTime + _idleTimeout >= Time.time)\n        {\n            _isReturningToIdle = true;\n            _currentState = States.Idle;\n        }\n    }\n\n    private void CheckForStateTransitions()\n    {\n        foreach (var trigger in _transitionConditions)\n        {\n            if (trigger.IsTriggered())\n            {\n                PerformTransition(trigger.getState());\n                return;\n            }\n        }\n\n        // Timeout for current state\n        if (_timeSpentInCurrentState >= _idleTimeout && !_autoReturnToIdle)\n        {\n            PerformTransition(States.Exhausted);\n        }\n    }\n\n    private void PerformTransition(States targetState)\n    {\n        _currentState = targetState;\n        _currentTime = 0f;\n\n        // Play transition effects\n        if (_transitionActions.Any(action => action.Type.Equals(targetState)))\n        {\n            var action = _transitionActions.Find(a => a.state.Equals(targetState));\n            if (action != null)\n            {\n                action.Execute();\n            }\n        }\n\n        // Apply state-specific behaviors\n        switch (targetState)\n        {\n            case States.Idle:\n                PlayIdleBehavior();\n                break;\n            case States.Curious:\n                PlayCuriousBehavior();\n                break;\n            case States.Scared:\n                PlayScaredBehavior();\n                break;\n            case States.Aggressive:\n                PlayAggressiveBehavior();\n                break;\n            case States.Exhausted:\n                PlayExhaustedBehavior();\n                break;\n        }\n\n        _lastTransitionTime = Time.time;\n    }\n\n    private void PlayIdleBehavior()\n    {\n        if (_idleTarget != null)\n        {\n            _idleTarget.localPosition = Vector3.zero;\n        }\n\n        PlayAmbientSound(_ambientSounds[Random.Range(0, _ambientSounds.Length)]);\n    }\n\n    private void PlayCuriousBehavior()\n    {\n        if (_curiosityTarget != null && !_isReturningToIdle)\n        {\n            float distanceToTarget = Vector3.Distance(transform.position, _curiosityTarget.position);\n            if (distanceToTarget <= _curiosityRadius)\n            {\n                _curiosityTarget.localPosition = new Vector3(\n                    Random.Range(-1f, 1f),\n                    Random.Range(_curiosityTarget.localEulerAngles.y + 90f * Mathf.Sin(Time.time * 2f), \n                    Random.Range(_curiosityTarget.localEulerAngles.z - 45f * Mathf.Cos(Time.time * 3f))\n                );\n            }\n        }\n\n        PlayQuestioningSound();\n    }\n\n    private void PlayScaredBehavior()\n    {\n        if (_scaredTarget != null && !_isReturningToIdle)\n        {\n            float distanceToTarget = Vector3.Distance(transform.position, _scaredTarget.position);\n            if (distanceToTarget <= _aggressionRadius * 0.5f)\n            {\n                RunAway();\n            }\n        }\n\n        PlayPanicSound();\n    }\n\n    private void PlayAggressiveBehavior()\n    {\n        if (_aggressionTarget != null && !_isReturningToIdle)\n        {\n            float distanceToTarget = Vector3.Distance(transform.position, _aggressionTarget.position);\n            if (distanceToTarget <= _aggressionRadius)\n            {\n                ChasePlayer();\n            }\n        }\n\n        PlayRoaringSound();\n    }\n\n    private void PlayExhaustedBehavior()\n    {\n        if (_exhaustionTarget != null && !_isReturningToIdle)\n        {\n            float distanceToTarget = Vector3.Distance(transform.position, _exhaustionTarget.position);\n            if (distanceToTarget <= _aggressionRadius * 0.8f)\n            {\n                StopMovement();\n            }\n        }\n\n        PlayTiredSound();\n    }\n\n    private void RunAway()\n    {\n        Rigidbody rb = GetComponent<Rigidbody>();\n        if (rb != null)\n        {\n            Vector3 awayDirection = (transform.position - _scaredTarget.position).normalized;\n            rb.AddForce(awayDirection * 5f, ForceMode.VelocityChange);\n        }\n    }\n\n    private void ChasePlayer()\n    {\n        Rigidbody rb = GetComponent<Rigidbody>();\n        if (rb != null)\n        {\n            Vector3 directionToPlayer = (Transform.InverseTransformPoint(_aggressionTarget.position) - transform.position).normalized;\n            rb.AddForce(directionToPlayer * 8f, ForceMode.VelocityChange);\n        }\n    }\n\n    private void PlayAmbientSound(AudioClip[] sounds)\n    {\n        if (sounds != null && sounds.Length > 0)\n        {\n            AudioSource audioSource = GetComponent<AudioSource>();\n            if (audioSource != null)\n            {\n                int randomIndex = Random.Range(0, sounds.Length);\n                audioSource.PlayOneShot(sounds[randomIndex]);\n            }\n        }\n    }\n\n    private void PlayQuestioningSound()\n    {\n        if (_questioningSounds != null && _questioningSounds.Length > 0)\n        {\n            AudioSource audioSource = GetComponent<AudioSource>();\n            if (audioSource != null)\n            {\n                int randomIndex = Random.Range(0, _questioningSounds.Length);\n                audioSource.PlayOneShot(_questioningSounds[randomIndex]);\n            }\n        }\n    }\n\n    private void PlayPanicSound()\n    {\n        if (_panicSounds != null && _panicSounds.Length > 0)\n        {\n            AudioSource audioSource = GetComponent<AudioSource>();\n            if (audioSource != null)\n            {\n                int randomIndex = Random.Range(0, _panicSounds.Length);\n                audioSource.PlayOneShot(_panicSounds[randomIndex]);\n            }\n        }\n    }\n\n    private void PlayRoaringSound()\n    {\n        if (_roaringSounds != null && _roaringSounds.Length > 0)\n        {\n            AudioSource audioSource = GetComponent<AudioSource>();\n            if (audioSource != null)\n            {\n                int randomIndex = Random.Range(0, _roaringSounds.Length);\n                audioSource.PlayOneShot(_roaringSounds[randomIndex]);\n            }\n        }\n    }\n\n    private void PlayTiredSound()\n    {\n        if (_tiredSounds != null && _tiredSounds.Length > 0)\n        {\n            AudioSource audioSource = GetComponent<AudioSource>();\n            if (audioSource != null)\n            {\n                int randomIndex = Random.Range(0, _tiredSounds.Length);\n                audioSource.PlayOneShot(_tiredSounds[randomIndex]);\n            }\n        }\n    }\n\n    private void StopMovement()\n    {\n        Rigidbody rb = GetComponent<Rigidbody>();\n        if (rb != null)\n        {\n            rb.velocity = Vector3.zero;\n        }\n    }\n\n    // Helper methods\n    public void SetState(States state, bool forceTransition = false)\n    {\n        _currentState = state;\n        _currentTime = 0f;\n\n        if (forceTransition)\n        {\n            PerformTransition(state);\n        }\n    }\n\n    private float _currentTime;\n    private Transform _scaredTarget;\n    private Transform _aggressionTarget;\n    private Transform _exhaustionTarget;\n\n    private void Awake()\n    {\n        _scaredTarget = GetComponentInChildren<Transform>();\n        if (_scaredTarget == null)\n            _scaredTarget = transform.GetChild(0);\n\n        _aggressionTarget = GetComponentInChildren<Transform>();\n        if (_aggressionTarget == null)\n            _aggressionTarget = transform.GetChild(0);\n\n        _exhaustionTarget = GetComponentInChildren<Transform>();\n        if (_exhaustionTarget == null)\n            _exhaustionTarget = transform.GetChild(0);\n    }\n\n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 2f);\n\n        // State indicators\n        switch (_currentState)\n        {\n            case States.Idle:\n                Gizmos.color = Color.green;\n                break;\n            case States.Curious:\n                Gizmos.color = Color.orange;\n                break;\n            case States.Scared:\n                Gizmos.color = Color.red;\n                break;\n            case States.Aggressive:\n                Gizmos.color = Color.darkorange;\n                break;\n            case States.Exhausted:\n                Gizmos.color = Color.gray;\n                break;\n        }\n\n        // Target indicators\n        switch (_currentState)\n        {\n            case States.Curious:\n                if (_curiosityTarget != null && !_isReturningToIdle)\n                    Gizmos.DrawWireSphere(_curiosityTarget.position, 1f);\n                break;\n            case States.Scared:\n                if (_scaredTarget != null && !_isReturningToIdle)\n                    Gizmos.DrawWireSphere(_scaredTarget.position, 0.5f);\n                break;\n            case States.Aggressive:\n                if (_aggressionTarget != null && !_isReturningToIdle)\n                    Gizmos.DrawWireSphere(_aggressionTarget.position, 1f);\n                break;\n        }\n    }\n\n    private class TriggerCondition\n    {\n        public enum State\n        {\n            IsTriggered = 0,\n            WasJustEntered = 1,\n            NeedsTransition = 2\n        }\n\n        [System.Serializable]\n        public class Condition\n        {\n            public string name;\n            public GameObject target;\n            public Vector3 direction;\n            public float distanceThreshold;\n            public bool isTriggered;\n\n            public Condition(string targetName, Vector3 direction, float distance)\n            {\n                name = \"Check \" + targetName;\n                this.target = GameObject.FindGameObjectWithTag(targetName);\n                if (target == null)\n                    target = gameObject;\n\n                this.direction = direction;\n                this.distanceThreshold = distance;\n                UpdateTrigger();\n            }\n\n            private void UpdateTrigger()\n            {\n                if (target != null && target.CompareTag(\"Player\"))\n                {\n                    float distanceToTarget = Vector3.Distance(transform.position, target.transform.position);\n                    isTriggered = distanceToTarget <= distanceThreshold;\n                }\n                else if (target == gameObject)\n                {\n                    // Check if this object has entered a specific area\n                    // This would need to be implemented based on your scene setup\n                }\n            }\n\n            public void SetDirection(Vector3 newDirection)\n            {\n                direction = newDirection;\n                UpdateTrigger();\n            }\n        }\n\n        [System.Serializable]\n        private class Action\n        {\n            public string actionName;\n            public GameObject target;\n            public Vector3 direction;\n            public float forceAmount;\n\n            public Action(string action, GameObject targetObj, Vector3 dir, float force)\n            {\n                actionName = action;\n                this.target = targetObj;\n                this.direction = dir;\n                this.forceAmount = force;\n            }\n\n            public void Execute()\n            {\n                // Implement specific behavior logic here\n            }\n        }\n\n        [System.Serializable]\n        private class TransitionAction\n        {\n            public string actionType;\n            public Action transitionAction;\n\n            public TransitionAction(string state, Action action)\n            {\n                actionType = state.ToString();\n                transitionAction = action;\n            }\n\n            public void Execute()\n            {\n                if (transitionAction != null)\n                    transitionAction.Execute();\n            }\n        }\n\n        [System.Serializable]\n        private List<Condition> _conditions = new List<Condition>();\n        [System.Serializable]\n        private List<TransitionAction> _actions = new List<TransitionAction>();\n\n        public TriggerCondition(string conditionName, Condition[] conditions, TransitionAction[] actions)\n        {\n            name = conditionName;\n            _conditions = conditions;\n            _actions = actions;\n        }\n\n        public bool IsTriggered()\n        {\n            foreach (var cond in _conditions)\n            {\n                if (!cond.isTriggered) return false;\n            }\n            return true;\n        }\n    }\n}",
+    "ir_json": null,
+    "ir_code": null,
+    "ir_steered": false,
+    "ir_rag_docs": 0,
+    "ir_rag_doc_names": null,
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": null,
+    "error": null
+  },
+  {
+    "prompt_num": 5,
+    "prompt": "Make a door that has locked, unlocking, open, and closing states. When locked, it plays a rattle sound and shakes slightly. When unlocking, it plays a key-turning sound for 3 seconds while rotating slowly, then transitions to open. When open, it plays a creak and stays open for 10 seconds, then automatically starts closing. During closing, it rotates back while playing a slam sound, then locks again. The door's material emission color changes with each state.",
+    "timestamp": "2026-01-08T20:26:48.526572",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections;\n\npublic class Door : MonoBehaviour\n{\n    [Header(\"Door Settings\")]\n    [SerializeField] private float _rotationSpeed = 90f;\n    [SerializeField] private float _unlockDuration = 3f;\n    [SerializeField] private float _openDuration = 10f;\n    [SerializeField] private bool _autoLockAfterClose = true;\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioClip[] _audio Clips = new AudioClip[4];\n    [SerializeField] private float _audioVolume = 1f;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private Color _lockedColor = Color.gray;\n    [SerializeField] private Color _unlockingColor = Color.yellow;\n    [SerializeField] private Color _openColor = Color.green;\n    [SerializeField] private Color _closingColor = Color.red;\n    [SerializeField] private float _colorTransitionSpeed = 5f;\n    \n    private bool _isLocked = true;\n    private bool _isUnlocking = false;\n    private bool _isOpen = false;\n    private bool _isClosing = false;\n    private AudioSource _audioSource;\n    private Transform _doorTransform;\n    private Vector3 _originalRotation;\n    private float _rotationAngle;\n    \n    private void Start()\n    {\n        _doorTransform = transform;\n        _originalRotation = _doorTransform.localEulerAngles;\n        \n        _audioSource = GetComponent<AudioSource>();\n        if (_audioSource == null)\n        {\n            _audioSource = gameObject.AddComponent<AudioSource>();\n        }\n        \n        _audioSource.playOnAwake = false;\n        _audioSource.loop = true;\n        _audioSource.volume = _audioVolume;\n    }\n    \n    private void Update()\n    {\n        if (!_isLocked && !_isOpen && !_isUnlocking)\n            return;\n            \n        HandleRotation();\n        UpdateVisualEffects();\n    }\n    \n    private void FixedUpdate()\n    {\n        if (_isClosing)\n        {\n            HandleClosing();\n        }\n    }\n    \n    private void HandleRotation()\n    {\n        float currentAngle = _doorTransform.localEulerAngles.y + 180f;\n        \n        if (!_isLocked && !_isOpen && !_isUnlocking)\n        {\n            return;\n        }\n        \n        // Apply rotation\n        Vector3 targetAngles = new Vector3(\n            _originalRotation.x,\n            currentAngle,\n            _originalRotation.z\n        );\n        _doorTransform.localEulerAngles = targetAngles;\n    }\n    \n    private void HandleClosing()\n    {\n        if (_isClosing)\n        {\n            float progress = Time.deltaTime / _openDuration;\n            \n            // Apply rotation back to closed position\n            Vector3 currentAngle = _doorTransform.localEulerAngles.y + 180f;\n            currentAngle -= _rotationAngle * progress;\n            _doorTransform.localEulerAngles.y = currentAngle - 180f;\n            \n            if (progress >= 1f)\n            {\n                _isClosing = false;\n                LockDoor();\n            }\n        }\n    }\n    \n    private void UpdateVisualEffects()\n    {\n        Color targetColor = Color.white;\n        \n        if (_isLocked)\n        {\n            targetColor = _lockedColor;\n        }\n        else if (!_isOpen && !_isUnlocking)\n        {\n            targetColor = _closingColor;\n        }\n        else if (_isUnlocking)\n        {\n            targetColor = _unlockingColor;\n        }\n        else if (_isOpen)\n        {\n            targetColor = _openColor;\n        }\n        \n        Color currentColor = _doorTransform.material.color;\n        \n        float t = Mathf.PingPong(Time.time * _colorTransitionSpeed) / 2f + 0.5f;\n        currentColor = Color.Lerp(currentColor, targetColor, t);\n        \n        if (_audioSource != null)\n        {\n            _audioSource.pitch = Mathf.Lerp(1f, 0.8f, progress);\n        }\n    }\n    \n    public void ToggleDoor()\n    {\n        if (_isLocked)\n        {\n            UnlockDoor();\n        }\n        else if (!_isOpen && !_isUnlocking)\n        {\n            CloseDoor();\n        }\n    }\n    \n    private void UnlockDoor()\n    {\n        _isUnlocking = true;\n        \n        // Play unlocking sound\n        PlayAudio(_audioClips[0]);\n        \n        // Rotate door to unlock position\n        Vector3 currentAngle = _doorTransform.localEulerAngles.y + 180f;\n        currentAngle += 90f * Mathf.Sin(Time.time * _rotationSpeed);\n        _doorTransform.localEulerAngles.y = currentAngle - 180f;\n        \n        // Change color during unlocking\n        Color targetColor = _unlockingColor;\n        UpdateVisualEffects();\n    }\n    \n    private void OpenDoor()\n    {\n        _isOpen = true;\n        \n        // Play open sound\n        PlayAudio(_audioClips[1]);\n        \n        // Stay open for duration\n        if (!_autoLockAfterClose)\n            return;\n            \n        // Change color to green\n        Color targetColor = _openColor;\n        UpdateVisualEffects();\n    }\n    \n    private void CloseDoor()\n    {\n        _isClosing = true;\n        \n        // Play slam sound\n        PlayAudio(_audioClips[2]);\n        \n        // Start rotating back\n        Vector3 currentAngle = _doorTransform.localEulerAngles.y + 180f;\n        currentAngle -= 90f * Mathf.Sin(Time.time * _rotationSpeed);\n        _doorTransform.localEulerAngles.y = currentAngle - 180f;\n    }\n    \n    private void LockDoor()\n    {\n        _isLocked = true;\n        \n        // Play lock sound\n        PlayAudio(_audioClips[3]);\n        \n        // Return to original position\n        Vector3 targetAngles = new Vector3(\n            _originalRotation.x,\n            -90f,\n            _originalRotation.z\n        );\n        _doorTransform.localEulerAngles = targetAngles;\n    }\n    \n    private void PlayAudio(AudioClip clip)\n    {\n        if (_audioSource != null && clip != null)\n        {\n            _audioSource.PlayOneShot(clip);\n        }\n    }\n    \n    public bool IsLocked => _isLocked;\n    public bool IsUnlocking => _isUnlocking;\n    public bool IsOpen => _isOpen;\n    public bool IsClosing => _isClosing;\n    \n    private void OnDestroy()\n    {\n        if (_audioSource != null)\n        {\n            _audioSource.Stop();\n        }\n    }\n}",
+    "ir_json": {
+      "class_name": "LockedDoor",
+      "components": [
+        "Animator",
+        "AudioSource",
+        "Collider",
+        "Renderer"
+      ],
+      "fields": [
+        {
+          "name": "rotationAngle",
+          "type": "float",
+          "default": -90
+        },
+        {
+          "name": "lockedAngle",
+          "type": "float",
+          "default": 0
+        },
+        {
+          "name": "openAngle",
+          "type": "float",
+          "default": 90
+        },
+        {
+          "name": "unlockDuration",
+          "type": "float",
+          "default": 3.0
+        },
+        {
+          "name": "openDuration",
+          "type": "float",
+          "default": 10.0
+        },
+        {
+          "name": "shakeIntensity",
+          "type": "float",
+          "default": 0.5
+        },
+        {
+          "name": "rattleVolume",
+          "type": "float",
+          "default": 1.2
+        },
+        {
+          "name": "keyTurnSound",
+          "type": "AudioClip",
+          "default": null
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "enter_locked_state",
+          "trigger": "when player presses lock button or approaches door while locked",
+          "actions": [
+            {
+              "action": "set material emission color to red"
+            },
+            {
+              "action": "rotate door to lockedAngle (0 degrees) with slight wobble"
+            },
+            {
+              "action": "play rattle sound at rattleVolume and intensity"
+            },
+            {
+              "action": "start continuous rotation back toward openAngle"
+            }
+          ]
+        },
+        {
+          "name": "unlock_door",
+          "trigger": "when door reaches unlock duration while locked",
+          "actions": [
+            {
+              "action": "stop shaking animation"
+            },
+            {
+              "action": "set material emission color to orange"
+            },
+            {
+              "action": "play key turn sound effect looped for unlockDuration"
+            }
+          ]
+        },
+        {
+          "name": "transition_to_open",
+          "trigger": "when unlock duration completes and door is unlocked",
+          "actions": [
+            {
+              "action": "stop rotation"
+            },
+            {
+              "action": "set material emission color to yellow"
+            }
+          ]
+        },
+        {
+          "name": "open_door",
+          "trigger": "when open duration starts with door open",
+          "actions": [
+            {
+              "action": "play creak sound once"
+            },
+            {
+              "action": "keep door at openAngle"
+            }
+          ]
+        },
+        {
+          "name": "close_door",
+          "trigger": "when open duration expires and player approaches while open",
+          "actions": [
+            {
+              "action": "rotate door back toward lockedAngle smoothly"
+            },
+            {
+              "action": "play slam sound as door hits closed position"
+            },
+            {
+              "action": "set material emission color to blue"
+            }
+          ]
+        },
+        {
+          "name": "enter_locked_state_again",
+          "trigger": "when door reaches lockedAngle while closing",
+          "actions": [
+            {
+              "action": "stop rotation"
+            },
+            {
+              "action": "set material emission color to red"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing UnityEngine.Events;\n\npublic class LockedDoor : MonoBehaviour\n{\n    [Header(\"Door Settings\")]\n    [SerializeField] private float _rotationSpeed = 90f;\n    [SerializeField] private float _openAngle = 45f;\n    [SerializeField] private float _closeAngle = -30f;\n    [SerializeField] private float _openDuration = 3f;\n    [SerializeField] private float _closeDuration = 2f;\n    \n    [Header(\"Animation\")]\n    [SerializeField] private Animator _animator;\n    [SerializeField] private string _doorTrigger = \"Door\";\n    [SerializeField] private string _lockedState = \"Locked\";\n    [SerializeField] private string _openState = \"Open\";\n    [SerializeField] private string _closeState = \"Close\";\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip _rattleSound;\n    [SerializeField] private AudioClip _lockClickSound;\n    [SerializeField] private AudioClip _unlockSound;\n    [SerializeField] private AudioClip _openCreakSound;\n    [SerializeField] private float _audioVolume = 1f;\n    \n    [Header(\"Events\")]\n    public UnityEvent OnDoorLocked;\n    public UnityEvent OnDoorOpened;\n    public UnityEvent OnDoorClosed;\n    \n    private Vector3 _startPosition;\n    private bool _isLocked = true;\n    private bool _isOpen = false;\n    private float _currentAngle = 0f;\n    private float _targetAngle = 0f;\n    private float _rotationTimer = 0f;\n    private float _audioTimer = 0f;\n    \n    private void Start()\n    {\n        _startPosition = transform.position;\n        \n        if (_animator == null)\n            _animator = GetComponent<Animator>();\n            \n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        OnDoorLocked?.Invoke();\n    }\n    \n    private void Update()\n    {\n        HandleRotation();\n        HandleAudio();\n    }\n    \n    private void OnTriggerEnter(Collider other)\n    {\n        if (other.CompareTag(\"Player\"))\n        {\n            if (!_isOpen && !_isLocked)\n            {\n                OpenDoor();\n            }\n            else if (_isLocked && !_isOpen)\n            {\n                LockDoor();\n            }\n            else if (_isOpen && _currentAngle < _closeAngle)\n            {\n                CloseDoor();\n            }\n        }\n    }\n    \n    private void OnTriggerExit(Collider other)\n    {\n        if (other.CompareTag(\"Player\"))\n        {\n            if (!_isOpen && _isLocked)\n            {\n                UnlockDoor();\n            }\n            else if (_isLocked && !_isOpen)\n            {\n                LockDoor();\n            }\n            else if (_isOpen && _currentAngle > _closeAngle)\n            {\n                CloseDoor();\n            }\n        }\n    }\n    \n    private void HandleRotation()\n    {\n        if (!_isOpen) return;\n        \n        float angleToReach = Mathf.Sign(_isLocked ? _closeAngle : _openAngle);\n        _targetAngle += angleToReach * Time.deltaTime * _rotationSpeed;\n        \n        _rotationTimer += Time.deltaTime * _rotationSpeed;\n        \n        if (_rotationTimer >= 2f)\n        {\n            _currentAngle = Mathf.MoveTowards(_currentAngle, _targetAngle, \n                angleToReach * _rotationSpeed * Time.deltaTime);\n            \n            if (Mathf.Abs(angleToReach) <= 0.01f)\n            {\n                CloseDoor();\n                return;\n            }\n        }\n    }\n    \n    private void HandleAudio()\n    {\n        if (!_isOpen || !_isLocked) return;\n        \n        float timePassed = _audioTimer / 2f;\n        float normalizedTime = Mathf.Clamp01(timePassed);\n        \n        if (_rattleSound != null && normalizedTime >= 1f)\n        {\n            PlayRattleSound();\n            _audioTimer = -_audioTimer; // Toggle sound on and off\n        }\n    }\n    \n    private void LockDoor()\n    {\n        _isLocked = true;\n        _isOpen = false;\n        \n        _currentAngle = _closeAngle;\n        _targetAngle = _closeAngle;\n        _rotationTimer = 0f;\n        _audioTimer = 0f;\n        \n        PlayAudio(_lockClickSound, _audioVolume);\n        OnDoorLocked?.Invoke();\n    }\n    \n    private void UnlockDoor()\n    {\n        _isLocked = false;\n        _isOpen = true;\n        \n        _currentAngle = _openAngle;\n        _targetAngle = _openAngle;\n        _rotationTimer = 0f;\n        _audioTimer = 0f;\n        \n        PlayAudio(_unlockSound, _audioVolume);\n        OnDoorLocked?.Invoke();\n    }\n    \n    private void OpenDoor()\n    {\n        if (!_isLocked) return;\n        \n        _isOpen = true;\n        _currentAngle = _openAngle;\n        _targetAngle = _openAngle;\n        _rotationTimer = 0f;\n        _audioTimer = 0f;\n        \n        PlayAudio(_unlockSound, _audioVolume);\n    }\n    \n    private void CloseDoor()\n    {\n        if (_isOpen) return;\n        \n        _isLocked = true;\n        _currentAngle = _closeAngle;\n        _targetAngle = _closeAngle;\n        _rotationTimer = 0f;\n        _audioTimer = 0f;\n        \n        PlayAudio(_lockClickSound, _audioVolume);\n    }\n    \n    private void PlayRattleSound()\n    {\n        if (_rattleSound != null && _audioSource != null)\n        {\n            _audioSource.PlayOneShot(_rattleSound, _audioVolume);\n        }\n    }\n    \n    private void PlayAudio(AudioClip clip, float volume)\n    {\n        if (_audioSource != null && clip != null)\n        {\n            _audioSource.clip = clip;\n            _audioSource.volume = Mathf.Clamp01(volume);\n            _audioSource.Play();\n        }\n    }\n    \n    public void SetLocked(bool locked)\n    {\n        if (locked && !_isOpen)\n        {\n            LockDoor();\n        }\n        else if (!locked && _isOpen)\n        {\n            UnlockDoor();\n        }\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 0.5f);\n        \n        Vector3 doorCenter = transform.position + Vector3.up * 0.5f;\n        float angleOffset = _isLocked ? -_closeAngle : _openAngle;\n        Gizmos.matrix = Quaternion.Euler(0, 90, 0) * Quaternion.identity;\n        Gizmos.DrawWireSphere(doorCenter, 0.2f);\n        \n        // Draw rotation direction\n        Vector3 rotationDirection = Vector3.Cross(Vector3.up, transform.forward).normalized;\n        Gizmos.color = Color.red;\n        Gizmos.DrawLine(doorCenter, doorCenter + rotationDirection * _rotationSpeed * 0.1f);\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 10,
+    "ir_rag_doc_names": [
+      "Animator.PlayInFixedTime (0.64)",
+      "Animation.PlayQueued (0.64)",
+      "Animation.IsPlaying (0.63)",
+      "Animation.Play (0.63)",
+      "Animator.GetNextAnimatorClipInfo (0.63)",
+      "Animator.CrossFadeInFixedTime (0.63)",
+      "AnimationMode.SamplePlayableGraph (0.45)",
+      "Animations.AnimationPlayableBinding (0.44)",
+      "ArticulationDofLock.LockedMotion (0.44)",
+      "Animations.PropertySceneHandle (0.44)"
+    ],
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "oneshot": {
+        "architecture": 4,
+        "fixability": 5,
+        "unity_patterns": 6,
+        "correctness": 3,
+        "completeness": 3,
+        "weighted_total": 47,
+        "justification": "Good initial structure with separation of concerns, but incomplete implementation with several unfinished methods. Attempts to handle multiple aspects but lacks cohesive execution."
+      },
+      "ir_monolithic": {
+        "architecture": 7,
+        "fixability": 6,
+        "unity_patterns": 8,
+        "correctness": 5,
+        "completeness": 4,
+        "weighted_total": 64,
+        "justification": "More robust Unity-centric approach with clear component interactions, better use of serialized fields, and more comprehensive state management."
+      },
+      "winner": "ir_monolithic",
+      "key_differences": "The IR Monolithic approach provides a more structured, Unity-native implementation with better use of events, animator integration, and clear state transitions. It demonstrates a more thoughtful approach to component design and interaction.",
+      "advantages": "1. Better use of Unity lifecycle methods\n2. More robust serialization and inspector configuration\n3. Clear separation of audio, animation, and state management\n4. More extensible event-driven architecture\n5. Improved error handling and component references"
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 6,
+    "prompt": "Create a bouncy ball that, every time it hits a surface, bounces higher than the previous bounce, plays a pitch that increases with each bounce, changes color based on bounce count, and leaves a temporary trail. After 10 bounces, it explodes into confetti particles while playing a celebration sound.",
+    "timestamp": "2026-01-08T20:29:04.981857",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections.Generic;\n\npublic class BouncyBall : MonoBehaviour\n{\n    [Header(\"Bounce Settings\")]\n    [SerializeField] private float _bounceHeightMultiplier = 1.2f;\n    [SerializeField] private float _maxBounceCount = 10f;\n    [SerializeField] private float _initialJumpForce = 5f;\n    \n    [Header(\"Pitch Settings\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip[] _bounceSounds;\n    [SerializeField] private float _pitchMultiplier = 1.05f;\n    [SerializeField] private int _currentBounceIndex = 0;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem _confettiEffect;\n    [SerializeField] private GameObject _trailPrefab;\n    [SerializeField] private bool _enableTrails = true;\n    \n    [Header(\"Color Settings\")]\n    [SerializeField] private Color _originalColor = Color.white;\n    [SerializeField] private float _colorTransitionSpeed = 2f;\n    \n    private Rigidbody _rigidbody;\n    private int _bounceCount = 0;\n    private bool _isGrounded = false;\n    private List<Collider> _hitColliders = new List<Collider>();\n    \n    void Start()\n    {\n        _rigidbody = GetComponent<Rigidbody>();\n        \n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (_confettiEffect == null)\n            _confettiEffect = GetComponentInChildren<ParticleSystem>();\n            \n        if (_trailPrefab != null && _enableTrails)\n        {\n            CreateTrailPrefab();\n        }\n    }\n    \n    void Update()\n    {\n        CheckGrounded();\n        \n        HandleColorTransition();\n        UpdateAudioPitch();\n    }\n    \n    private void FixedUpdate()\n    {\n        if (!_isGrounded) return;\n        \n        ApplyBounce();\n        \n        if (_bounceCount >= _maxBounceCount)\n        {\n            ExplodeAndDestroy();\n        }\n    }\n    \n    private void CheckGrounded()\n    {\n        Collider[] colliders = Physics.OverlapSphere(transform.position, 0.5f);\n        \n        bool wasGrounded = _isGrounded;\n        \n        foreach (Collider col in colliders)\n        {\n            if (col.CompareTag(\"Ground\"))\n            {\n                _isGrounded = true;\n                break;\n            }\n        }\n        \n        if (!_isGrounded && wasGrounded)\n        {\n            // Jump up\n            _rigidbody.velocity = Vector3.up * _initialJumpForce;\n            _bounceCount++;\n            \n            if (_bounceCount >= _maxBounceCount)\n            {\n                ExplodeAndDestroy();\n            }\n        }\n    }\n    \n    private void ApplyBounce()\n    {\n        float forceToApply = 0f;\n        \n        foreach (Collider col in _hitColliders)\n        {\n            Vector3 bounceDirection = Vector3.Reflect(_rigidbody.velocity.normalized, col.transform.position);\n            \n            // Add random variation to bounce direction\n            Vector3 variation = Random.insideUnitSphere * 0.1f;\n            bounceDirection += variation;\n            \n            forceToApply = Physics.gravity.magnitude * bounceDirection * _bounceHeightMultiplier;\n        }\n        \n        if (_hitColliders.Count > 0)\n        {\n            foreach (Collider col in _hitColliders)\n            {\n                Vector3 reflectionPoint = col.transform.position;\n                Vector3 bounceVector = Vector3.Reflect(_rigidbody.velocity.normalized, reflectionPoint);\n                \n                // Apply the calculated force\n                _rigidbody.AddForce(bounceVector * forceToApply / _hitColliders.Count);\n            }\n            \n            _hitColliders.Clear();\n        }\n    }\n    \n    private void CreateTrailPrefab()\n    {\n        GameObject trailObj = new GameObject(\"Trail\");\n        \n        TrailRenderer renderer = trailObj.AddComponent<TrailRenderer>();\n        renderer.enabled = true;\n        renderer.useWorldSpace = false;\n        renderer.startWidth = 0.1f;\n        renderer.endWidth = 0.3f;\n        renderer.color = _originalColor;\n        renderer.useVertexColors = false;\n        \n        TrailRenderer.ParticleSize = 0.01f;\n        TrailRenderer.NumParticles = 100;\n        TrailRenderer.MaxLifetime = 5f;\n        \n        trailObj.transform.SetParent(transform);\n        trailObj.SetActive(false);\n    }\n    \n    private void HandleColorTransition()\n    {\n        Color targetColor = _originalColor;\n        \n        for (int i = 0; i < _bounceCount; i++)\n        {\n            float progress = i / (_maxBounceCount - 1f);\n            targetColor += (targetColor - _originalColor) * Mathf.Lerp(0, 1, progress);\n        }\n        \n        if (_enableTrails)\n        {\n            GameObject trailObj = GetComponentInChildren<TrailRenderer>();\n            if (trailObj != null)\n            {\n                trailObj.color = targetColor;\n            }\n        }\n    }\n    \n    private void UpdateAudioPitch()\n    {\n        if (_audioSource == null || _bounceSounds == null || _currentBounceIndex >= _bounceSounds.Length)\n            return;\n            \n        float pitchMultiplier = Mathf.Pow(_pitchMultiplier, (float)_currentBounceIndex / _maxBounceCount);\n        \n        _audioSource.pitch = pitchMultiplier;\n    }\n    \n    private void ExplodeAndDestroy()\n    {\n        PlayCelebrationSound();\n        \n        if (_confettiEffect != null)\n        {\n            _confettiEffect.Play();\n        }\n        \n        if (_trailPrefab != null && _enableTrails)\n        {\n            CreateTrailPrefab();\n        }\n        \n        StartCoroutine(DestroyAfterDelay(2f));\n    }\n    \n    private IEnumerator DestroyAfterDelay(float delay)\n    {\n        yield return new WaitForSeconds(delay);\n        \n        Destroy(gameObject);\n    }\n    \n    private void PlayCelebrationSound()\n    {\n        if (_audioSource != null && _bounceSounds.Length > 0)\n        {\n            _audioSource.PlayOneShot(_bounceSounds[0]);\n        }\n    }\n}",
+    "ir_json": {
+      "class_name": "BouncyBall",
+      "components": [
+        "Collider",
+        "Rigidbody2D",
+        "AudioSource",
+        "ParticleSystem"
+      ],
+      "fields": [
+        {
+          "name": "bounceCount",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "baseVelocity",
+          "type": "float",
+          "default": 3.0
+        },
+        {
+          "name": "maxBounceHeight",
+          "type": "float",
+          "default": 20.0
+        },
+        {
+          "name": "velocityMultiplier",
+          "type": "float",
+          "default": 1.2
+        },
+        {
+          "name": "pitchScale",
+          "type": "float",
+          "default": 1.05
+        },
+        {
+          "name": "trailDuration",
+          "type": "float",
+          "default": 5.0
+        },
+        {
+          "name": "trailColor",
+          "type": "Color",
+          "default": "white"
+        },
+        {
+          "name": "startColor",
+          "type": "Color",
+          "default": "blue"
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "initialize_bounce",
+          "trigger": "when object starts as active bouncy ball",
+          "actions": [
+            {
+              "action": "set starting position at ground level"
+            },
+            {
+              "action": "assign initial color to startColor"
+            },
+            {
+              "action": "reset bounceCount to zero"
+            },
+            {
+              "action": "enable trail effect with trailDuration and trailColor"
+            }
+          ]
+        },
+        {
+          "name": "detect_collision",
+          "trigger": "when object collides with any surface below it",
+          "actions": [
+            {
+              "action": "increment bounce count by one"
+            },
+            {
+              "action": "increase pitch scale based on bounce count multiplier"
+            },
+            {
+              "action": "change ball color to neon effect based on bounce count and current color"
+            }
+          ]
+        },
+        {
+          "name": "bounce_impulse",
+          "trigger": "when collision detected and bounce count is less than maximum bounces",
+          "actions": [
+            {
+              "action": "apply upward force using base velocity multiplied by velocity multiplier"
+            },
+            {
+              "action": "play pitch sound at current pitch scale"
+            },
+            {
+              "action": "add trail particle effect in the direction of bounce"
+            }
+          ]
+        },
+        {
+          "name": "increase_bounce_height",
+          "trigger": "every time ball hits ground after bounce",
+          "actions": [
+            {
+              "action": "multiply base velocity by velocity multiplier again to increase height"
+            }
+          ]
+        },
+        {
+          "name": "trail_fade",
+          "trigger": "while trail remains active and not yet destroyed",
+          "actions": [
+            {
+              "action": "reduce trail opacity over time until fading out completely"
+            }
+          ]
+        },
+        {
+          "name": "explode_on_tenth_bounce",
+          "trigger": "when bounce count reaches ten and ball hits ground",
+          "actions": [
+            {
+              "action": "play celebration sound effect"
+            },
+            {
+              "action": "spawn confetti particles around the ball location"
+            },
+            {
+              "action": "destroy this bouncy ball object"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\n\npublic class BouncyBall : MonoBehaviour\n{\n    [Header(\"Bounce Settings\")]\n    [SerializeField] private float _baseJumpForce = 5f;\n    [SerializeField] private float _bounceMultiplier = 1.8f;\n    [SerializeField] private int _maxBounces = 15;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem _trailParticleSystem;\n    [SerializeField] private AudioClip _bounceSound;\n    [SerializeField] private AudioClip _explosionSound;\n    [SerializeField] private float _trailDuration = 3f;\n    [SerializeField] private Color _trailColor = Color.white;\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private float _pitchMultiplier = 1.05f;\n    [SerializeField] private float _minPitch = 0.8f;\n    [SerializeField] private float _maxPitch = 2f;\n    \n    [Header(\"Collision\")]\n    [SerializeField] private bool _useRigidbody = true;\n    [SerializeField] private LayerMask _groundLayer = 1;\n    \n    private Rigidbody _rigidbody;\n    private int _bounceCount = 0;\n    private bool _isGrounded = false;\n    private Vector3 _originalPosition;\n    private Color _originalColor;\n    private float _originalPitch;\n    private float _trailStartTime;\n    \n    private void Start()\n    {\n        InitializeComponents();\n        StoreOriginalValues();\n        \n        if (_rigidbody == null)\n        {\n            _rigidbody = GetComponent<Rigidbody>();\n        }\n        \n        if (!_useRigidbody && _rigidbody != null)\n        {\n            _rigidbody.isKinematic = true;\n        }\n    }\n    \n    private void InitializeComponents()\n    {\n        if (_audioSource == null)\n        {\n            _audioSource = GetComponent<AudioSource>();\n        }\n        \n        if (_trailParticleSystem != null)\n        {\n            _trailParticleSystem.Stop();\n        }\n    }\n    \n    private void StoreOriginalValues()\n    {\n        _originalPosition = transform.position;\n        _originalColor = gameObject.color;\n        _originalPitch = _audioSource.pitch;\n        \n        if (_trailParticleSystem != null && !_trailParticleSystem.isPlaying)\n        {\n            _trailStartTime = Time.time;\n        }\n    }\n    \n    private void OnTriggerEnter2D(Collider2D other)\n    {\n        if (other.CompareTag(\"Ground\"))\n        {\n            Bounce();\n        }\n        else\n        {\n            HandleCollision(other);\n        }\n    }\n    \n    private void OnCollisionEnter2D(Collision2D collision)\n    {\n        if (_useRigidbody && !collision.isTrigger)\n        {\n            HandleCollision(collision.gameObject);\n        }\n    }\n    \n    private void HandleCollision(GameObject target)\n    {\n        _bounceCount++;\n        \n        // Apply bounce force upward\n        Vector3 jumpForce = transform.up * _baseJumpForce;\n        jumpForce.y *= _bounceMultiplier;\n        if (_useRigidbody && _rigidbody != null)\n        {\n            _rigidbody.AddForce(jumpForce, ForceMode2D.Impulse);\n        }\n        \n        // Change color to neon effect\n        Color newColor = _originalColor;\n        switch (_bounceCount % 3)\n        {\n            case 0: newColor = Color.red; break;\n            case 1: newColor = Color.green; break;\n            case 2: newColor = Color.blue; break;\n            default: newColor = Color.yellow; break;\n        }\n        \n        // Adjust pitch\n        float targetPitch = _minPitch + (_maxPitch - _minPitch) * (0.5f + _bounceCount / 10f);\n        targetPitch = Mathf.Clamp(targetPitch, _minPitch, _maxPitch);\n        if (_audioSource != null)\n        {\n            _audioSource.pitch = targetPitch;\n        }\n        \n        // Trail effects\n        if (_trailParticleSystem != null && !_trailParticleSystem.isPlaying)\n        {\n            _trailParticleSystem.Play();\n            _trailParticleSystem.transform.position = transform.position;\n            _trailParticleSystem.color = newColor;\n            _trailParticleSystem.StopAfterDuration(_trailDuration);\n        }\n        \n        // Explosion on 10th bounce\n        if (_bounceCount >= 10)\n        {\n            PlayExplosionSound();\n        }\n    }\n    \n    private void Bounce()\n    {\n        _isGrounded = true;\n        _bounceCount++;\n        \n        // Change color to neon effect\n        Color newColor = _originalColor;\n        switch (_bounceCount % 3)\n        {\n            case 0: newColor = Color.red; break;\n            case 1: newColor = Color.green; break;\n            case 2: newColor = Color.blue; break;\n            default: newColor = Color.yellow; break;\n        }\n        \n        // Trail effects\n        if (_trailParticleSystem != null && !_trailParticleSystem.isPlaying)\n        {\n            _trailParticleSystem.Play();\n            _trailParticleSystem.transform.position = transform.position;\n            _trailParticleSystem.color = newColor;\n            _trailParticleSystem.StopAfterDuration(_trailDuration);\n        }\n        \n        // Pitch change\n        float targetPitch = 1.05f + (_bounceCount / 10f * 0.5f);\n        targetPitch = Mathf.Clamp(targetPitch, _minPitch, _maxPitch);\n        if (_audioSource != null)\n        {\n            _audioSource.pitch = targetPitch;\n        }\n        \n        // Play sound\n        if (_bounceSound != null && _audioSource != null)\n        {\n            _audioSource.PlayOneShot(_bounceSound);\n        }\n    }\n    \n    private void PlayExplosionSound()\n    {\n        if (_explosionSound != null && _audioSource != null)\n        {\n            _audioSource.PlayOneShot(_explosionSound);\n        }\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, 0.5f);\n        \n        if (_trailParticleSystem != null && !_trailParticleSystem.isPlaying)\n        {\n            Gizmos.color = _trailColor;\n            Gizmos.DrawRay(transform.position, -transform.up * 2f);\n        }\n    }\n    \n    private void OnDestroy()\n    {\n        if (_audioSource != null)\n        {\n            _audioSource.pitch = _originalPitch;\n        }\n        \n        if (_trailParticleSystem != null && _trailParticleSystem.isPlaying)\n        {\n            _trailParticleSystem.Stop();\n        }\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 10,
+    "ir_rag_doc_names": [
+      "ParticleSystem.GetPlaybackState (0.63)",
+      "ParticleSystem.TrailModule (0.63)",
+      "ParticleSystem.ColorBySpeedModule (0.63)",
+      "Rigidbody2D.AddForceAtPosition (0.62)",
+      "Rigidbody2D.AddRelativeForce (0.61)",
+      "Rigidbody2D.AddForceX (0.61)",
+      "Collider.OnTriggerEnter (0.60)",
+      "Collider.OnCollisionExit (0.60)",
+      "Collider.OnCollisionStay (0.60)",
+      "ParticleSystemShapeMultiModeValue.BurstSpread (0.44)"
+    ],
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "oneshot": {
+        "architecture": 6,
+        "fixability": 5,
+        "unity_patterns": 7,
+        "correctness": 4,
+        "completeness": 5,
+        "weighted_total": 55,
+        "justification": "Good use of serialized fields and headers, but the code becomes complex and lacks clear separation of concerns. The implementation starts to get fragmented and incomplete, with some methods truncated."
+      },
+      "ir_monolithic": {
+        "architecture": 8,
+        "fixability": 7,
+        "unity_patterns": 9,
+        "correctness": 6,
+        "completeness": 6,
+        "weighted_total": 70,
+        "justification": "More structured approach with clear method separation, better use of Unity patterns, and more complete implementation of the requested features."
+      },
+      "winner": "ir_monolithic",
+      "key_differences": "The IR approach provides a more systematic and modular implementation, with better separation of initialization, collision handling, and state management. It demonstrates a more thoughtful approach to component design.",
+      "advantages": "1. More comprehensive use of Unity component lifecycle methods\n2. Better organized code with clear method responsibilities\n3. More robust error handling and component initialization\n4. More flexible configuration through serialized fields\n5. More complete implementation of the original request"
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 7,
+    "prompt": "Make an object that floats upward when you're near it (within 5 units), but falls faster when you're far away. It plays a humming sound that gets higher pitched as it rises, and lower pitched as it falls. The object also rotates opposite to its vertical movement direction, and its scale pulses in sync with the audio frequency.",
+    "error": "unhashable type: 'dict'",
+    "timestamp": "2026-01-08T20:31:42.461584"
+  },
+  {
+    "prompt_num": 8,
+    "prompt": "Build a physics-based pendulum that swings naturally, but when it reaches the bottom of its swing, it applies an explosive force to any rigidbody it touches, plays a bell sound, and creates a shockwave particle effect. The pendulum's rope length can be adjusted, and the swing speed affects the volume of the bell sound.",
+    "timestamp": "2026-01-08T20:31:42.911110",
+    "oneshot_code": "using UnityEngine;\nusing System.Collections;\n\npublic class ExplosivePendulum : MonoBehaviour\n{\n    [Header(\"Pendulum Settings\")]\n    [SerializeField] private float _ropeLength = 2f;\n    [SerializeField] private float _swingSpeed = 3f;\n    [SerializeField] private LayerMask _groundLayer = -1;\n    \n    [Header(\"Explosion Settings\")]\n    [SerializeField] private float _explosionForce = 1000f;\n    [SerializeField] private float _explosionRadius = 5f;\n    [SerializeField] private float _explosionDuration = 0.3f;\n    [SerializeField] private AnimationCurve _forceOverTime = AnimationCurve.EaseInOut(0, 1, 1, 0);\n    \n    [Header(\"Audio Settings\")]\n    [SerializeField] private AudioClip _bellSound;\n    [SerializeField] private float _minVolume = 0.1f;\n    [SerializeField] private float _maxVolume = 1f;\n    [SerializeField] private AnimationCurve _volumeOverTime = AnimationCurve.Linear(0, _minVolume, 1, _maxVolume);\n    \n    [Header(\"Effects\")]\n    [SerializeField] private ParticleSystem _shockwaveEffect;\n    [SerializeField] private GameObject _explosionPrefab;\n    [SerializeField] private float _explosionDamage = 50f;\n    \n    private Vector3 _startPosition;\n    private Rigidbody _rigidbody;\n    private AudioSource _audioSource;\n    private bool _isSwinging = false;\n    private float _currentAngle = 0f;\n    private float _originalVelocity;\n    private float _swingDirection = 1f;\n    \n    void Start()\n    {\n        _startPosition = transform.position;\n        \n        if (_rigidbody == null)\n            _rigidbody = GetComponent<Rigidbody>();\n            \n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (_bellSound != null && _audioSource != null)\n        {\n            _audioSource.clip = _bellSound;\n            _audioSource.loop = true;\n            _audioSource.volume = 0.5f * _maxVolume;\n        }\n        \n        if (_shockwaveEffect != null)\n        {\n            _shockwaveEffect.Play();\n        }\n    }\n    \n    void Update()\n    {\n        if (Input.GetKeyDown(KeyCode.Space) && !_isSwinging)\n        {\n            StartSwing(_swingDirection);\n        }\n        \n        if (_isSwinging)\n        {\n            CalculateTargetPosition();\n            ApplyGravity();\n            CheckForGroundCollision();\n        }\n    }\n    \n    private void FixedUpdate()\n    {\n        if (!_isSwinging) return;\n        \n        Vector3 targetPosition = CalculateTargetPosition();\n        transform.position = Vector3.Lerp(transform.position, targetPosition, Time.fixedDeltaTime * _swingSpeed);\n        \n        if (Physics.Raycast(transform.position, Vector3.down, out RaycastHit hitInfo))\n        {\n            CheckForGroundCollision();\n        }\n    }\n    \n    private void CalculateTargetPosition()\n    {\n        float angleInRadians = _currentAngle * Mathf.Deg2Rad;\n        float targetX = _startPosition.x + Mathf.Cos(angleInRadians) * _ropeLength;\n        float targetY = _startPosition.y - Mathf.Sin(angleInRadians) * _ropeLength;\n        \n        Vector3 targetPosition = new Vector3(targetX, targetY, transform.position.z);\n        transform.position = Vector3.Lerp(transform.position, targetPosition, Time.fixedDeltaTime * _swingSpeed);\n    }\n    \n    private void ApplyGravity()\n    {\n        if (_rigidbody != null)\n        {\n            Vector3 velocity = _rigidbody.velocity;\n            float currentAngle = GetCurrentSwingAngle();\n            \n            // Damping effect based on angle\n            float dampingFactor = 0.8f * Mathf.Abs(Mathf.Sin(currentAngle));\n            velocity.y *= Mathf.Pow(1f - dampingFactor, 2f);\n        }\n    }\n    \n    private void CheckForGroundCollision()\n    {\n        if (Physics.Raycast(transform.position, Vector3.down, out RaycastHit hitInfo))\n        {\n            if (hitInfo.collider.gameObject.layer == _groundLayer)\n            {\n                float currentAngle = GetCurrentSwingAngle();\n                \n                // Detect bottom of swing\n                bool isAtBottom = Mathf.Abs(currentAngle) >= 90f;\n                \n                if (isAtBottom && !_isExplosionTriggered)\n                {\n                    TriggerExplosion();\n                }\n            }\n        }\n    }\n    \n    private float GetCurrentSwingAngle()\n    {\n        Vector3 downVector = new Vector3(0, -1, 0);\n        Vector3 ropeStart = transform.position;\n        Vector3 pendulumEnd = transform.position + Vector3.up * _ropeLength;\n        \n        // Calculate angle using dot product\n        float dotProduct = Vector3.Dot(downVector.normalized, (pendulumEnd - ropeStart).normalized);\n        return Mathf.Acos(dotProduct) * Mathf.Rad2Deg;\n    }\n    \n    private void StartSwing(float direction)\n    {\n        _isSwinging = true;\n        _swingDirection = direction;\n        \n        // Reset angle and velocity\n        _currentAngle = 0f;\n        _originalVelocity = _rigidbody.velocity.magnitude;\n        \n        if (_audioSource != null && _bellSound != null)\n        {\n            PlayBellSound();\n        }\n    }\n    \n    private void PlayBellSound()\n    {\n        float normalizedTime = Time.time * _volumeOverTime.Evaluate(0f);\n        float volume = Mathf.Lerp(_minVolume, _maxVolume, normalizedTime);\n        \n        if (_audioSource != null && _bellSound != null)\n        {\n            _audioSource.PlayOneShot(_bellSound, volume);\n        }\n    }\n    \n    private void TriggerExplosion()\n    {\n        _isSwinging = false;\n        _isExplosionTriggered = true;\n        \n        ApplyExplosionForce();\n        PlayBellSound();\n        SpawnShockwaveEffect();\n        \n        StartCoroutine(ExplosionCooldown());\n    }\n    \n    private void ApplyExplosionForce()\n    {\n        Collider[] colliders = Physics.OverlapSphere(transform.position, _explosionRadius);\n        \n        foreach (Collider col in colliders)\n        {\n            if (col.CompareTag(\"Player\") || col.CompareTag(\"Enemy\"))\n            {\n                ApplyDamageToCollider(col.gameObject);\n            }\n        }\n    }\n    \n    private void ApplyDamageToCollider(GameObject target)\n    {\n        Rigidbody rb = target.GetComponent<Rigidbody>();\n        if (rb != null)\n        {\n            // Push away from pendulum\n            Vector3 directionAway = (target.transform.position - transform.position).normalized;\n            rb.AddForce(directionAway * _explosionDamage, ForceMode.Impulse);\n        }\n        \n        Collider col = target.GetComponent<Collider>();\n        if (col != null)\n        {\n            ApplyExplosionDamageToCollider(col.gameObject);\n        }\n    }\n    \n    private void ApplyExplosionDamageToCollider(GameObject target)\n    {\n        Rigidbody rb = target.GetComponent<Rigidbody>();\n        if (rb != null)\n        {\n            // Push away from pendulum\n            Vector3 directionAway = (target.transform.position - transform.position).normalized;\n            rb.AddForce(directionAway * _explosionDamage, ForceMode.Impulse);\n        }\n        \n        Collider col = target.GetComponent<Collider>();\n        if (col != null)\n        {\n            ApplyExplosionDamageToCollider(col.gameObject);\n        }\n    }\n    \n    private System.Collections.IEnumerator ExplosionCooldown()\n    {\n        yield return new WaitForSeconds(_explosionDuration);\n        _isSwinging = false;\n    }\n    \n    public void ResetPendulum()\n    {\n        transform.position = _startPosition;\n        _currentAngle = 0f;\n        _swingDirection = 1f;\n        \n        if (_audioSource != null && _bellSound != null)\n        {\n            PlayBellSound();\n        }\n        \n        if (_shockwaveEffect != null)\n        {\n            _shockwaveEffect.Stop();\n        }\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        Gizmos.color = Color.yellow;\n        Gizmos.DrawWireSphere(transform.position, _ropeLength);\n        \n        float angle = GetCurrentSwingAngle() * Mathf.Deg2Rad;\n        Vector3 targetPos = new Vector3(\n            _startPosition.x + Mathf.Cos(angle) * _ropeLength,\n            _startPosition.y - Mathf.Sin(angle) * _ropeLength,\n            transform.position.z\n        );\n        \n        Gizmos.DrawLine(transform.position, targetPos);\n    }\n}",
+    "ir_json": {
+      "class_name": "ExplosivePendulum",
+      "components": [
+        "Rigidbody",
+        "Collider",
+        "AudioSource",
+        "ParticleSystem",
+        "MeshRenderer"
+      ],
+      "fields": [
+        {
+          "name": "pivotPoint",
+          "type": "Transform",
+          "default": null
+        },
+        {
+          "name": "ropeLength",
+          "type": "float",
+          "default": 2.0
+        },
+        {
+          "name": "bobHeight",
+          "type": "float",
+          "default": 1.5
+        },
+        {
+          "name": "swingSpeed",
+          "type": "float",
+          "default": 3.0
+        },
+        {
+          "name": "mass",
+          "type": "float",
+          "default": 10.0
+        },
+        {
+          "name": "isTriggered",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "lastImpactTime",
+          "type": " float",
+          "default": 0.0
+        }
+      ],
+      "behaviors": [
+        {
+          "name": "update_pendulum_position",
+          "trigger": "every frame while active and not triggered",
+          "actions": [
+            {
+              "action": "calculate target position based on swing angle"
+            },
+            {
+              "action": "apply gravitational force toward pivot point"
+            },
+            {
+              "action": "move pendulum mass to calculated position using rope length"
+            }
+          ]
+        },
+        {
+          "name": "detect_bottom_collision",
+          "trigger": "when pendulum mass is within trigger range below pivot and not triggered before",
+          "actions": [
+            {
+              "action": "record current impact time"
+            },
+            {
+              "action": "check if this is the first impact or cooldown has elapsed"
+            }
+          ]
+        },
+        {
+          "name": "explosive_impact",
+          "trigger": "when bottom collision detected and conditions met",
+          "actions": [
+            {
+              "action": "apply explosive force to all nearby rigidbodies within blast radius"
+            },
+            {
+              "action": "play bell sound clip at volume proportional to swing speed with random pitch variation"
+            },
+            {
+              "action": "start shockwave particle effect expanding outward from impact point"
+            },
+            {
+              "action": "set triggered state to true for a cooldown period"
+            }
+          ]
+        },
+        {
+          "name": "reset_after_cooldown",
+          "trigger": "when cooldown time expires and not currently triggered",
+          "actions": [
+            {
+              "action": "set triggered state to false"
+            },
+            {
+              "action": "return pendulum to starting position using initial swing angle"
+            }
+          ]
+        },
+        {
+          "name": "reset_on_start",
+          "trigger": "when pendulum is created at start",
+          "actions": [
+            {
+              "action": "set mass as active rigidbody component"
+            },
+            {
+              "action": "position pendulum mass above pivot point at starting angle"
+            }
+          ]
+        }
+      ]
+    },
+    "ir_code": "using UnityEngine;\nusing System.Collections;\n\npublic class ExplosivePendulum : MonoBehaviour\n{\n    [Header(\"Pendulum Settings\")]\n    [SerializeField] private Transform _pivotPoint;\n    [SerializeField] private float _ropeLength = 2f;\n    [SerializeField] private float _bobHeight = 1.5f;\n    [SerializeField] private float _swingSpeed = 3f;\n    [SerializeField] private float _mass = 10f;\n    \n    [Header(\"Explosion Settings\")]\n    [SerializeField] private GameObject _explosionPrefab;\n    [SerializeField] private Transform _impactPoint;\n    [SerializeField] private float _blastRadius = 5f;\n    [SerializeField] private LayerMask _affectedLayers = -1;\n    [SerializeField] private float _cooldownTime = 3f;\n    \n    [Header(\"Audio\")]\n    [SerializeField] private AudioSource _audioSource;\n    [SerializeField] private AudioClip _impactSound;\n    [SerializeField] private float _minPitch = 0.5f;\n    [SerializeField] private float _maxPitch = 2f;\n    \n    [Header(\"Visual Effects\")]\n    [SerializeField] private ParticleSystem _explosionParticles;\n    [SerializeField] private Transform _shockwaveParent;\n    [SerializeField] private float _shockwaveSpeed = 10f;\n    [SerializeField] private float _shockwaveLifetime = 5f;\n    [SerializeField] private Color _shockwaveColor = Color.white;\n    \n    private Rigidbody _rigidbody;\n    private Vector3 _startPosition;\n    private float _currentAngle;\n    private bool _isTriggered;\n    private float _lastImpactTime;\n    private bool _cooldownActive;\n    \n    private void Start()\n    {\n        InitializeComponents();\n        StoreStartPosition();\n        _currentAngle = Random.Range(0f, Mathf.PI * 2f);\n        ResetPendulum();\n    }\n    \n    private void InitializeComponents()\n    {\n        if (_audioSource == null)\n            _audioSource = GetComponent<AudioSource>();\n            \n        if (_rigidbody == null)\n            _rigidbody = gameObject.AddComponent<Rigidbody>();\n        \n        if (_pivotPoint == null)\n            _pivotPoint = transform;\n        \n        if (_shockwaveParent == null)\n        {\n            GameObject shockwaveGO = new GameObject(\"Shockwave\");\n            shockwaveGO.transform.SetParent(transform);\n            _shockwaveParent = shockwaveGO.transform;\n        }\n    }\n    \n    private void StoreStartPosition()\n    {\n        _startPosition = transform.position;\n        \n        if (_rigidbody != null)\n        {\n            Vector3 startPos = _pivotPoint.position + new Vector3(\n                Mathf.Cos(_currentAngle) * _bobHeight,\n                0f,\n                Mathf.Sin(_currentAngle) * _bobHeight\n            );\n            _rigidbody.velocity = (startPos - transform.position).normalized;\n        }\n    }\n    \n    private void ResetPendulum()\n    {\n        _isTriggered = false;\n        _cooldownActive = false;\n        \n        if (_pivotPoint != null)\n        {\n            Vector3 startPos = _pivotPoint.position + new Vector3(\n                Mathf.Cos(_currentAngle) * _bobHeight,\n                0f,\n                Mathf.Sin(_currentAngle) * _bobHeight\n            );\n            \n            transform.position = startPos;\n            _rigidbody.velocity = (startPos - transform.position).normalized;\n        }\n        \n        _currentAngle = Random.Range(0f, Mathf.PI * 2f);\n    }\n    \n    private void Update()\n    {\n        if (!_isTriggered && !_cooldownActive)\n        {\n            AnimatePendulum();\n            ApplyGravity();\n        }\n    }\n    \n    private void AnimatePendulum()\n    {\n        _currentAngle += Time.deltaTime * _swingSpeed;\n        \n        if (_pivotPoint != null)\n        {\n            Vector3 startPos = _pivotPoint.position + new Vector3(\n                Mathf.Cos(_currentAngle) * _bobHeight,\n                0f,\n                Mathf.Sin(_currentAngle) * _bobHeight\n            );\n            \n            transform.position = startPos;\n        }\n    }\n    \n    private void ApplyGravity()\n    {\n        if (_rigidbody != null)\n        {\n            Vector3 gravityForce = -Physics.gravity.normalized * _mass * 9.81f;\n            _rigidbody.AddForce(gravityForce, ForceMode.Acceleration);\n        }\n    }\n    \n    private void OnTriggerEnter(Collider other)\n    {\n        if (IsBottomContact(other))\n        {\n            TriggerExplosion(other.gameObject);\n        }\n    }\n    \n    private bool IsBottomContact(Collider other)\n    {\n        return !other.CompareTag(\"Player\") && \n               Vector3.Distance(transform.position, _pivotPoint.position + new Vector3(\n                   Mathf.Cos(_currentAngle) * _bobHeight,\n                   0f,\n                   Mathf.Sin(_currentAngle) * _bobHeight\n               )) < 0.1f;\n    }\n    \n    private void TriggerExplosion(GameObject target)\n    {\n        if (_isTriggered || _cooldownActive) return;\n        \n        _lastImpactTime = Time.time;\n        _isTriggered = true;\n        \n        if (_impactPoint == null)\n            _impactPoint = transform.position;\n            \n        StartCoroutine(ExplosionCoroutine(target));\n        \n        if (_audioSource != null && _impactSound != null)\n        {\n            PlayImpactSound();\n        }\n    }\n    \n    private System.Collections.IEnumerator ExplosionCoroutine(GameObject target)\n    {\n        yield return new WaitForSeconds(_cooldownTime);\n        _cooldownActive = false;\n        \n        if (_explosionParticles != null)\n        {\n            _explosionParticles.Play();\n        }\n        \n        if (target != null)\n        {\n            Destroy(target);\n        }\n        \n        StartCoroutine(ShockwaveCoroutine());\n    }\n    \n    private System.Collections.IEnumerator ShockwaveCoroutine()\n    {\n        if (_shockwaveParent == null) yield break;\n        \n        float startTime = Time.time;\n        while (Time.time - startTime < _shockwaveLifetime)\n        {\n            Vector3 direction = (transform.position - _impactPoint.position).normalized;\n            Vector3 shockwavePosition = _shockwaveParent.position + direction * _blastRadius;\n            \n            GameObject shockwaveObject = new GameObject(\"Shockwave\");\n            Transform shockwaveTransform = shockwaveObject.transform;\n            shockwaveTransform.localPosition = shockwavePosition;\n            shockwaveObject.SetActive(true);\n            \n            if (_shockwaveColor != Color.white)\n                shockwaveTransform.material.color = _shockwaveColor;\n                \n            yield return new WaitForSeconds(1f / _shockwaveSpeed);\n        }\n        \n        if (shockwaveObject != null)\n            Destroy(shockwaveObject);\n    }\n    \n    private void PlayImpactSound()\n    {\n        if (_audioSource == null) return;\n        \n        float pitch = 1f + Random.Range(-0.5f, 0.5f); // Add some variation\n        pitch = Mathf.Clamp01(pitch);\n        _audioSource.pitch = pitch;\n        _audioSource.PlayOneShot(_impactSound);\n    }\n    \n    private void OnDrawGizmosSelected()\n    {\n        if (_pivotPoint != null)\n        {\n            Gizmos.color = Color.blue;\n            Vector3 startPos = _pivotPoint.position + new Vector3(\n                Mathf.Cos(_currentAngle) * _bobHeight,\n                0f,\n                Mathf.Sin(_currentAngle) * _bobHeight\n            );\n            \n            Gizmos.DrawWireSphere(startPos, 0.1f);\n            Gizmos.DrawLine(transform.position, startPos);\n        }\n    }\n}",
+    "ir_steered": false,
+    "ir_rag_docs": 10,
+    "ir_rag_doc_names": [
+      "Rigidbody.OnCollisionExit (0.65)",
+      "Rigidbody.OnCollisionStay (0.64)",
+      "Rigidbody.OnCollisionEnter (0.64)",
+      "ParticleSystem.TriggerSubEmitter (0.61)",
+      "ParticleSystem.TriggerModule (0.61)",
+      "ParticleSystem.GetPlaybackState (0.60)",
+      "RigidbodyConstraints.FreezeRotation (0.43)",
+      "RigidbodyConstraints.FreezeRotationX (0.43)",
+      "RigidbodyConstraints.FreezeRotationZ (0.43)",
+      "Animations.MuscleHandle (0.41)"
+    ],
+    "per_behavior_code": null,
+    "per_behavior_docs": 0,
+    "per_behavior_methods": 0,
+    "per_behavior_doc_names": null,
+    "grade": {
+      "oneshot": {
+        "architecture": 6,
+        "fixability": 5,
+        "unity_patterns": 7,
+        "correctness": 4,
+        "completeness": 3,
+        "weighted_total": 54,
+        "justification": "Good initial structure with clear headers and serialized fields, but the implementation becomes fragmented and incomplete. The code starts strong but doesn't fully complete the implementation, leaving critical methods unfinished."
+      },
+      "ir_monolithic": {
+        "architecture": 8,
+        "fixability": 9,
+        "unity_patterns": 9,
+        "correctness": 7,
+        "completeness": 6,
+        "weighted_total": 73,
+        "justification": "Extremely well-structured with clear separation of concerns, robust initialization methods, and thoughtful component management. Demonstrates deep understanding of Unity patterns with comprehensive setup and extension points."
+      },
+      "winner": "ir_monolithic",
+      "key_differences": "The IR approach shows more systematic design, with explicit initialization methods, better component management, and more comprehensive error handling. The oneshot approach is more ad-hoc and incomplete.",
+      "advantages": "The IR approach provides a more robust framework with clear method responsibilities, better error prevention, and more flexible configuration. It shows a more professional approach to Unity component design, with methods like InitializeComponents() and StoreStartPosition() demonstrating forward-thinking software engineering principles."
+    },
+    "error": null
+  },
+  {
+    "prompt_num": 9,
+    "prompt": "Create a time bomb that beeps every second, with the beep frequency increasing as time runs down. The object's color pulses red in sync with beeps, and it shakes more violently as time decreases. After 10 seconds, it explodes with a massive force affecting all rigidbodies in a 20-unit radius, plays an explosion sound, and spawns fire particles that last 5 seconds.",
+    "error": "unhashable type: 'dict'",
+    "timestamp": "2026-01-08T20:34:43.590847"
+  }
+]

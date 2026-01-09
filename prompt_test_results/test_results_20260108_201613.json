@@ -1,0 +1,14 @@
+[
+  {
+    "prompt_num": 1,
+    "prompt": "Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase.",
+    "error": "unhashable type: 'dict'",
+    "timestamp": "2026-01-08T20:14:39.883205"
+  },
+  {
+    "prompt_num": 2,
+    "prompt": "Make a gravity well that pulls nearby rigidbodies toward it with increasing force based on distance, plays a low-frequency rumble that gets louder as objects get closer, changes the light intensity based on how many objects are currently being pulled, and creates particle effects at the point where objects collide with the center, all while rotating the entire gravity well slowly.",
+    "error": "unhashable type: 'dict'",
+    "timestamp": "2026-01-08T20:15:28.457329"
+  }
+]

@@ -71,7 +71,7 @@ class SteeringConfig:
     all_keywords: List[str] = field(default_factory=list)
     # Baseline settings
     baselines_enabled: bool = False
-    baseline_cache_dir: str = "baseline_cache"
+    baseline_cache_dir: str = None  # Will be set to results/baseline_cache if None
     baseline_tolerance: Dict = field(default_factory=lambda: {
         "fields": 0.5,
         "behaviors": 0.5,
@@ -230,7 +230,10 @@ class AttractorSteering:
             return cache
         
         from pathlib import Path
-        cache_dir = Path(self.config.baseline_cache_dir)
+        if self.config.baseline_cache_dir is None:
+            cache_dir = Path(os.path.join(os.path.dirname(__file__), "..", "results", "baseline_cache"))
+        else:
+            cache_dir = Path(self.config.baseline_cache_dir)
         if not cache_dir.exists():
             return cache
         
@@ -648,7 +651,16 @@ class AttractorSteering:
         # Extract structure from target
         n_fields = len(parsed_json.get("fields", []))
         n_behaviors = len(parsed_json.get("behaviors", []))
-        components = set(parsed_json.get("components", []))
+        
+        # Handle components - may be strings or dicts from LLM
+        components_raw = parsed_json.get("components", [])
+        components = set()
+        for c in components_raw:
+            if isinstance(c, str):
+                components.add(c)
+            elif isinstance(c, dict):
+                components.add(c.get("name", ""))
+        
         field_names = {f.get("name", "").lower() for f in parsed_json.get("fields", []) if isinstance(f, dict)}
         state = parsed_json.get("state", {})
         has_sm = state.get("has_state_machine", False) if isinstance(state, dict) else False

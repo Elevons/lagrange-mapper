@@ -79,7 +79,8 @@ LOCAL_REFERENCE_URL = "http://localhost:1234/v1/chat/completions"
 LOCAL_REFERENCE_MODEL = "reference-model"
 
 # Baseline cache
-BASELINE_CACHE_DIR = "baseline_cache"
+import os
+BASELINE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "baseline_cache")
 GENERATE_BASELINES = True  # Set to True to generate baselines during pipeline
 N_STRUCTURAL_CLUSTERS = 5  # Number of structural cliché clusters to find
 

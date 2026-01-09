@@ -384,10 +384,12 @@ def main():
             print(f"  Tool-based: {sum(tb_hall)/len(tb_hall):.1f}/10")
     
     # Save results
-    os.makedirs("prompt_test_results", exist_ok=True)
-    with open("prompt_test_results/tool_rag_results.json", "w") as f:
+    results_dir = os.path.join(os.path.dirname(__file__), "prompt_test_results")
+    os.makedirs(results_dir, exist_ok=True)
+    results_path = os.path.join(results_dir, "tool_rag_results.json")
+    with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nResults saved to prompt_test_results/tool_rag_results.json")
+    print(f"\nResults saved to {results_path}")
 
 
 if __name__ == "__main__":

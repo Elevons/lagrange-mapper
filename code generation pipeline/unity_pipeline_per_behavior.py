@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 # ============================================================================
 
 LLM_URL = "http://localhost:1234/v1/chat/completions"
-RAG_DB_PATH = "unity_rag_db"
+import os
+RAG_DB_PATH = os.path.join(os.path.dirname(__file__), "unity_rag_db")
 DEFAULT_TEMPERATURE = 0.3  # Lower for more deterministic code
 DOCS_PER_BEHAVIOR = 6
 

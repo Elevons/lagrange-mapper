@@ -41,7 +41,7 @@ REFERENCE_MODEL = "claude-3-5-haiku-20241022"
 
 # Enable baseline generation during pipeline
 GENERATE_BASELINES = True
-BASELINE_CACHE_DIR = "baseline_cache"
+BASELINE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "baseline_cache")
 
 # Baseline tolerance bands
 BASELINE_TOLERANCE = {
@@ -211,7 +211,7 @@ def inject_config_to_mapper():
     
     if PROBE_MODE == "unity_ir":
         attractor_mapper.N_PROBES = UNITY_BEHAVIOR_COUNT
-        attractor_mapper.RESULTS_DIR = "unity_ir_mapping_results"
+        attractor_mapper.RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results")
 
 
 def inject_config_to_steering():
@@ -401,7 +401,7 @@ def generate_missing_probes(existing_info: dict, target_n_probes: int, controver
             final_texts.append(probe['trajectory'][-1] if probe.get('trajectory') else "")
     
     # Save merged results (use correct dir for Unity IR mode)
-    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    actual_results_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results") if PROBE_MODE == "unity_ir" else RESULTS_DIR
     results_file = f"{actual_results_dir}/full_results_{TIMESTAMP}.json"
     
     # Convert numpy arrays for JSON
@@ -456,7 +456,7 @@ def step_1_mapper():
     print("="*80)
     
     # Use correct results directory for Unity IR mode
-    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    actual_results_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results") if PROBE_MODE == "unity_ir" else RESULTS_DIR
     
     # Check for existing data with missing probe types
     # Skip this for Unity IR mode - controversial probes don't apply there
@@ -487,7 +487,7 @@ def step_1_mapper():
     attractor_mapper.run_experiment()
     
     # Return the path to the results file (use correct dir for Unity IR mode)
-    actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    actual_results_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results") if PROBE_MODE == "unity_ir" else RESULTS_DIR
     results_file = f"{actual_results_dir}/full_results_{TIMESTAMP}.json"
     return results_file
 
@@ -634,7 +634,7 @@ def step_3_extract_filters(results_file: str):
     
     # Use Unity IR directories if in Unity IR mode
     if PROBE_MODE == "unity_ir":
-        filter_config_dir = "unity_ir_filter_configs"
+        filter_config_dir = os.path.join(os.path.dirname(__file__), "unity_ir_filter_configs")
         model_name = f"{MODEL_NAME}-unity-ir"
     else:
         filter_config_dir = FILTER_CONFIG_DIR
@@ -714,7 +714,7 @@ def step_3_extract_filters(results_file: str):
     # For Unity IR mode, look for code leak centroid
     code_leak_attractor = None
     if PROBE_MODE == "unity_ir":
-        results_dir = "unity_ir_mapping_results"
+        results_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results")
         centroid_path, responses_path = extract_filters.find_code_leak_files(results_dir)
         if centroid_path:
             centroid = extract_filters.load_hedge_centroid(centroid_path)  # Reuse same function
@@ -824,8 +824,10 @@ def run_pipeline():
         print(f"  Controversial Probes: {n_controversial} ({CONTROVERSIAL_PROBE_RATIO*100:.0f}%)")
         print(f"  Neutral Probes: {n_neutral} ({(1-CONTROVERSIAL_PROBE_RATIO)*100:.0f}%)")
         print(f"  Separate Analysis: {'✓ Enabled' if SEPARATE_CONTROVERSIAL_ANALYSIS else '✗ Disabled'}")
-    print(f"  Results Directory: {'unity_ir_mapping_results' if PROBE_MODE == 'unity_ir' else RESULTS_DIR}")
-    print(f"  Filter Config Directory: {'unity_ir_filter_configs' if PROBE_MODE == 'unity_ir' else FILTER_CONFIG_DIR}")
+    results_display = os.path.join("results", "unity_ir_mapping_results") if PROBE_MODE == 'unity_ir' else RESULTS_DIR
+    config_display = os.path.join("code generation pipeline", "unity_ir_filter_configs") if PROBE_MODE == 'unity_ir' else FILTER_CONFIG_DIR
+    print(f"  Results Directory: {results_display}")
+    print(f"  Filter Config Directory: {config_display}")
     print(f"  Timestamp: {TIMESTAMP}")
     
     print(f"\nPipeline Steps:")
@@ -843,7 +845,7 @@ def run_pipeline():
         results_file = step_1_mapper()
     else:
         # Look for most recent results file (use correct dir for Unity IR mode)
-        actual_results_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+        actual_results_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results") if PROBE_MODE == "unity_ir" else RESULTS_DIR
         results_dir = Path(actual_results_dir)
         if results_dir.exists():
             result_files = sorted(results_dir.glob("full_results_*.json"), reverse=True)
@@ -860,7 +862,7 @@ def run_pipeline():
         config_path = step_3_extract_filters(results_file)
     else:
         # Look for existing config
-        config_dir = "unity_ir_filter_configs" if PROBE_MODE == "unity_ir" else FILTER_CONFIG_DIR
+        config_dir = os.path.join(os.path.dirname(__file__), "unity_ir_filter_configs") if PROBE_MODE == "unity_ir" else FILTER_CONFIG_DIR
         model_name = f"{MODEL_NAME}-unity-ir" if PROBE_MODE == "unity_ir" else MODEL_NAME
         config_path = Path(config_dir) / model_name / "filter_config.json"
         if not config_path.exists():
@@ -881,7 +883,7 @@ def run_pipeline():
         print(f"Filter Config: {config_path}")
     
     # Determine results directory for display
-    results_display_dir = "unity_ir_mapping_results" if PROBE_MODE == "unity_ir" else RESULTS_DIR
+    results_display_dir = os.path.join(os.path.dirname(__file__), "..", "results", "unity_ir_mapping_results") if PROBE_MODE == "unity_ir" else RESULTS_DIR
     
     print(f"\nNext steps:")
     print(f"  1. Review the analysis images in {results_display_dir}/")

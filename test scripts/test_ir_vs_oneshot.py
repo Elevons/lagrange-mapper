@@ -11,7 +11,13 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
-from unity_pipeline_no_rag import UnityPipelineNoRAG
+# Note: unity_pipeline_no_rag is in archive_deprecated
+# This test may need to be updated or archived
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# from archive_deprecated.unity_pipeline_no_rag import UnityPipelineNoRAG
+# Temporarily commented out - file is in archive_deprecated
 
 # Load .env file
 load_dotenv()
@@ -20,7 +26,7 @@ load_dotenv()
 LLM_URL = "http://localhost:1234/v1/chat/completions"
 CLAUDE_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 PROMPTS_FILE = "crazy_test_prompts.txt"
-OUTPUT_DIR = "prompt_test_results"
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "prompt_test_results")
 
 # Oneshot system prompt (same as other tests for fair comparison)
 ONESHOT_SYSTEM_PROMPT = """You are a Unity C# expert. Generate complete, working MonoBehaviour scripts.

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Test Unity IR steering against code leak patterns"""
 
-from attractor_steering import load_steering
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from code_generation_pipeline.attractor_steering import load_steering
 
 # Test cases: natural language (should pass) vs code leak (should flag)
 TEST_CASES = [
@@ -82,14 +85,15 @@ TEST_CASES = [
 
 def main():
     try:
-        steering = load_steering("local-model-unity-ir", "unity_ir_filter_configs")
+        config_path = os.path.join(os.path.dirname(__file__), "..", "code generation pipeline", "unity_ir_filter_configs")
+        steering = load_steering("local-model-unity-ir", config_path)
     except FileNotFoundError:
         print("="*70)
         print("UNITY IR CODE LEAK DETECTION TEST")
         print("="*70)
         print("\n⚠ Filter config not found!")
         print("  Run the pipeline first with PROBE_MODE='unity_ir'")
-        print("  Expected config at: unity_ir_filter_configs/local-model-unity-ir/filter_config.json")
+        print(f"  Expected config at: {os.path.join('code generation pipeline', 'unity_ir_filter_configs', 'local-model-unity-ir', 'filter_config.json')}")
         return
     
     print("="*70)

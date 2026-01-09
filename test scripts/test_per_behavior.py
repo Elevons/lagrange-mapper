@@ -1,6 +1,9 @@
 """Quick test to compare monolithic vs per-behavior pipelines"""
 
-from unity_pipeline_per_behavior import compare_approaches
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from code_generation_pipeline.unity_pipeline_per_behavior import compare_approaches
 
 test_prompt = "Create a gravity well that pulls nearby rigidbodies toward it and plays a humming sound"
 

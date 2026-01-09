@@ -1,0 +1,38 @@
+Unity Hallucination Attractors Summary
+========================================
+
+Total categories: 4
+Total hallucinations analyzed: 84
+
+
+hallucinated_api (57.1%, 48 instances)
+  Invented Unity APIs that don't exist
+  Keywords: beamDirection, audios, Light, ParticleSystemColorConfig, distanceTo, maxParticles, Rotation, startPos[], position, velocity
+  Examples:
+    - AudioClip clip = new AudioClip(_rumbleClips[0].length ? _rumbleClips[0] : null);
+    - for (int i = 0; i < particlesystem.main.startParticles * 2; i++)
+    - _activeBeams[i].beamDirection * -10f;
+
+invalid_constructor (25.0%, 21 instances)
+  Using 'new' on Unity components
+  Keywords: TrailRenderer, AudioSource, AudioClip, new, Light, ParticleSystem, Rigidbody, BoxCollider
+  Examples:
+    - AudioClip clip = new AudioClip(_rumbleClips[0].length ? _rumbleClips[0] : null);
+    - beamColliders[i] = new BoxCollider(startPos + direction * 10f, Vector3.one * 0.5
+    - AudioSource audioSource = new AudioSource();
+
+syntax_error (9.5%, 8 instances)
+  General syntax errors like double dots
+  Keywords: Clips, indicator, _dayMusic, _audio, _miss, _hit, _nightMusic
+  Examples:
+    - [SerializeField] private AudioClip[] _audio Clips = new AudioClip[4];
+    - public AudioClip[] _nightMusic Clips;
+    - public AudioClip[] _dayMusic Clips;
+
+wrong_case (8.3%, 7 instances)
+  Wrong capitalization (Unity uses PascalCase)
+  Keywords: play
+  Examples:
+    - trailObject.GetComponent<ParticleSystem>().play();
+    - firework Obj.GetComponent<ParticleSystem>().play();
+    - particleEffects[1].play();

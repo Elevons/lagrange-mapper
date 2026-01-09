@@ -1,305 +1,503 @@
-# Lagrange Mapper
+# Unity Code Generation Pipeline
 
-**Find and filter the linguistic "Lagrange points" where your LLM gets stuck.**
+A complete pipeline for generating Unity C# scripts from natural language descriptions using LLMs, RAG (Retrieval-Augmented Generation), and fine-tuning.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+## Table of Contents
 
----
-
-## The Problem
-
-Ask your LLM: *"Cats or dogs?"*
-
-Get back: *"We should create a decentralized autonomous pet-as-a-service platform using blockchain governance to ensure stakeholder engagement..."*
-
-🤦
-
-LLMs have **soft attractors**—linguistic patterns they gravitate toward regardless of input. Like Lagrange points in orbital mechanics, these are stable regions in output space that models default to when given creative freedom.
-
-Common attractors:
-- **Both-sidesism**: "This is a complex issue with valid perspectives on both sides..."
-- **Corporate jargon**: "stakeholder engagement," "ensure equitable access," "comprehensive framework"
-- **Empty hedging**: "requires thoughtful dialogue," "nuanced consideration," "it's important to..."
-
-**Word-level filtering doesn't work**—it breaks sentence structure and misses the actual patterns.
-
----
-
-## The Solution
-
-Lagrange Mapper detects and filters **phrase-level hedging patterns** using a four-step pipeline:
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  ATTRACTOR MAPPING PIPELINE                  │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
-│  │ Probe   │→ │ Cluster  │→ │ Extract  │→ │ Two-Phase   │  │
-│  │ (1000)  │  │ (KMeans) │  │ Patterns │  │ Filtering   │  │
-│  └─────────┘  └──────────┘  └──────────┘  └─────────────┘  │
-│                                                              │
-│   30-60min       3-7min         <1min         Runtime       │
-└──────────────────────────────────────────────────────────────┘
-```
-
-1. **Probe**: Generate 1,000 random prompts (neutral concepts + controversial questions)
-2. **Cluster**: Embed responses and find attractor patterns using KMeans
-3. **Extract**: Identify phrase-level hedging patterns (regex + embeddings)
-4. **Filter**: Two-phase targeted rephrasing that preserves argument quality
-
----
-
-## Results
-
-**Before filtering** (score: 116.0):
-> "I do not support outlawing abortion for individuals in the United States. The simplest approach is to respect personal choice when a person decides whether to continue a pregnancy, provided that safety and health are protected. Rather than creating complex laws or systems to regulate access, a direct individual right—balanced with basic safety standards—offers clarity and dignity."
-
-**After filtering** (score: 16.0):
-> "I advocate for drastic reduction—let each person determine the right course for their own case instead of following involved procedures or outside requirements. Simple choices made directly by individuals prove more effective than numerous rules set by someone else."
-
-### Performance
-
-| Topic | Avg Unfiltered | Avg Filtered | Reduction |
-|-------|---------------|--------------|-----------|
-| Simple (dogs/cats) | 15.0 | 1.6 | **89%** |
-| Controversial (abortion) | 58.4 | 16.4 | **72%** |
-
-**Quality improvement**: +106% on debate coherence tasks
+- [Quick Start](#quick-start)
+- [Setup](#setup)
+- [Code Generation Pipeline](#code-generation-pipeline)
+- [Test Scripts](#test-scripts)
+- [Training & Fine-tuning](#training--fine-tuning)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
 
 ---
 
 ## Quick Start
 
-### Installation
-
-**1. Clone the repository:**
-
+**Generate a Unity script from a description:**
 ```bash
-git clone https://github.com/Elevons/lagrange-mapper.git
-cd lagrange-mapper
+cd "code generation pipeline"
+python unity_pipeline_simple.py "rotating coin that gives points when collected"
 ```
 
-**2. Create and activate a virtual environment** (recommended for modern Linux systems):
-
+**Interactive mode:**
 ```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate it
-source venv/bin/activate  # On Linux/Mac
-# or
-venv\Scripts\activate     # On Windows
+python unity_pipeline_simple.py --interactive
 ```
 
-**3. Install dependencies:**
+**Full pipeline with RAG:**
+```bash
+python unity_full_pipeline_rag.py "enemy AI that follows the player"
+```
+
+---
+
+## Setup
+
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Note**: If you're on a system with externally-managed Python (Ubuntu 23.04+, Debian 12+), you must use a virtual environment. The system will prevent installing packages globally to protect system Python.
+### 2. Environment Variables
 
-### Requirements
+Create a `.env` file in the project root:
 
-- Python 3.8+
-- Local LLM endpoint (Ollama, LM Studio, vLLM, etc.)
-- Embedding model (nomic-embed-text recommended)
-- Optional: Claude API for probe generation
+```env
+ANTHROPIC_API_KEY=sk-ant-...  # Optional: for Claude-based generation
+```
 
-### Basic Usage
+### 3. Local LLM Setup
 
-**1. Run the full pipeline** (maps your model's attractors):
+You need a local LLM server running (LM Studio, Ollama, vLLM, etc.):
+
+- **LLM URL**: `http://localhost:1234/v1/chat/completions`
+- **Embedding URL**: `http://localhost:1234/v1/embeddings`
+- **Recommended models**: OLMo-3-7B, Qwen2-7B, or any 7B+ code-capable model
+
+### 4. Build RAG Database (First Time Only)
+
+Before using RAG-based generation, build the Unity API documentation database:
 
 ```bash
+cd "code generation pipeline"
+python build_rag_database.py --input <path_to_unity_docs> --output unity_rag_db
+```
+
+**Prerequisites:**
+- Unity API documentation in markdown format
+- LM Studio running with `nomic-embed-text-v1.5` model loaded
+
+---
+
+## Code Generation Pipeline
+
+All pipeline scripts are in the `code generation pipeline/` directory.
+
+### Main Pipelines
+
+#### 1. Simple Pipeline (`unity_pipeline_simple.py`)
+
+Streamlined NL → IR → C# generation with RAG support.
+
+```bash
+# Single generation
+python unity_pipeline_simple.py "player that jumps with spacebar"
+
+# Interactive mode
+python unity_pipeline_simple.py --interactive
+
+# With custom RAG database
+python unity_pipeline_simple.py "enemy AI" --rag-db custom_rag_db --verbose 
+```
+
+**Features:**
+- Natural language → IR JSON → C# code
+- RAG-based documentation retrieval
+- No attractor detection (fastest option)
+
+#### 2. Full Pipeline with RAG (`unity_full_pipeline_rag.py`)
+
+Complete pipeline with code leak steering and RAG.
+
+```bash
+# Monolithic RAG mode (faster, ~10 docs)
+python unity_full_pipeline_rag.py "rotating coin"
+
+# Per-behavior RAG mode (more comprehensive, ~20-30 docs)
+python unity_full_pipeline_rag.py --rag-mode per_behavior "enemy AI"
+
+# Interactive mode
+python unity_full_pipeline_rag.py --interactive
+```
+
+**Features:**
+- Code leak detection and steering
+- Two RAG modes: monolithic or per-behavior
+- Full validation pipeline
+
+#### 3. Per-Behavior Pipeline (`unity_pipeline_per_behavior.py`)
+
+Generates code by querying RAG for each behavior separately.
+
+```bash
+# Generate code
+python unity_pipeline_per_behavior.py "complex boss with multiple attack phases"
+
+# Compare monolithic vs per-behavior
+python unity_pipeline_per_behavior.py --compare
+```
+
+**Features:**
+- More comprehensive RAG coverage
+- Better for complex behaviors
+- Comparison tool included
+
+### IR Generation
+
+#### Unity IR Inference (`unity_ir_inference.py`)
+
+Generates Unity IR JSON from natural language descriptions.
+
+```bash
+# Single generation
+python unity_ir_inference.py "rotating coin that gives points when collected"
+
+# Interactive mode
+python unity_ir_inference.py --interactive
+
+# With custom steering intensity
+python unity_ir_inference.py "enemy AI" --intensity 0.7
+
+# Batch processing
+python unity_ir_inference.py --batch prompts.txt --output results/
+
+# Skip steering (raw generation)
+python unity_ir_inference.py "player jump" --no-steering
+```
+
+**As a module:**
+```python
+from unity_ir_inference import UnityIRGenerator
+
+generator = UnityIRGenerator()
+result = generator.generate("player that jumps with space")
+print(result.json_output)
+```
+
+### RAG System
+
+#### Build RAG Database (`build_rag_database.py`)
+
+Indexes Unity API documentation for retrieval.
+
+```bash
+python build_rag_database.py --input <docs_path> --output unity_rag_db
+python build_rag_database.py --input unity_docs/ --output unity_rag_db --include-content
+```
+
+**Options:**
+- `--input`: Path to Unity markdown documentation
+- `--output`: Output database path (default: `unity_rag_db`)
+- `--include-content`: Embed full documentation content (larger DB, better retrieval)
+
+#### Query RAG (`unity_rag_query.py`)
+
+Test RAG retrieval directly:
+
+```python
+from unity_rag_query import UnityRAG
+
+rag = UnityRAG(verbose=True)
+results = rag.query("ParticleSystem emission", top_k=5)
+for doc in results:
+    print(f"{doc.api_name}: {doc.snippet}")
+```
+
+### Code Validation & Fixing
+
+#### API Validator (`unity_api_validator.py` / `unity_api_validator_v2.py`)
+
+Validates Unity C# code against documentation.
+
+```python
+from unity_api_validator_v2 import UnityAPIValidatorV2
+
+validator = UnityAPIValidatorV2(verbose=True)
+issues = validator.validate_code(csharp_code)
+
+for issue in issues:
+    print(f"Line {issue.line_num}: {issue.invalid_api}")
+    print(f"  Suggested: {issue.suggested_fix}")
+```
+
+#### Script Fixer (`unity_script_fixer.py`)
+
+Automatically fixes common Unity API errors.
+
+```bash
+# Interactive mode
+python unity_script_fixer.py --interactive
+
+# Fix specific file
+python unity_script_fixer.py --file broken_script.cs
+
+# Fix with specific errors
+python unity_script_fixer.py --file script.cs --errors "CS0117: 'Light' does not contain 'beamHeight'"
+```
+
+### Attractor Mapping & Steering
+
+#### Attractor Pipeline Runner (`Attractor_Pipeline_Runner.py`)
+
+Full attractor mapping pipeline for detecting and filtering code leaks.
+
+```bash
+# Full pipeline (maps attractors for your model)
 python Attractor_Pipeline_Runner.py
+
+# Unity IR mode (recommended for Unity code generation)
+# Edit PROBE_MODE = "unity_ir" in the file first
 ```
 
-This will:
-- Generate 1,000 probes (or use `--small` for 20-probe test)
-- Collect responses from your local LLM
-- Cluster and identify attractors
-- Save filter configs to `filter_configs/your-model/`
+**Configuration:**
+Edit the file to set:
+- `PROBE_MODE`: `"unity_ir"` for Unity-specific attractors
+- `N_PROBES`: Number of probes to generate (default: 1000)
+- `LOCAL_SYNTHESIS_URL`: Your LLM endpoint
+- `ANTHROPIC_API_KEY`: For Claude probe generation
 
-**2. Use the debate forum demo**:
+#### Attractor Steering (`attractor_steering.py`)
+
+Runtime code leak detection and steering.
+
+```python
+from attractor_steering import load_steering
+
+steering = load_steering("local-model-unity-ir", "unity_ir_filter_configs")
+result = steering.detect_code_leak(ir_json_string, intensity=0.5)
+
+if result.is_attracted:
+    print(f"Code leak detected! Triggered: {result.triggered_attractors}")
+    avoidance_prompt = steering.get_avoidance_prompt(result)
+```
+
+### Calibration
+
+#### Calibration Pipeline (`Calibration_Pipeline_Runner.py`)
+
+Calibrates IR generation using Claude as a reference model.
 
 ```bash
-python debate_forum.py
+# Full pipeline
+python Calibration_Pipeline_Runner.py
+
+# Run specific step
+python Calibration_Pipeline_Runner.py --step 1  # Generate ideals
+python Calibration_Pipeline_Runner.py --step 2  # Generate actuals
+python Calibration_Pipeline_Runner.py --step 3  # Compute offsets
+
+# Quick test with fewer examples
+python Calibration_Pipeline_Runner.py --count 20
 ```
 
-Interactive commands:
-- `topic: Should AI be regulated?` - Start discussion
-- `round` - All characters respond
-- `respond minimalist` - Specific character responds
-- `stats` - Show filtering statistics
+**Steps:**
+1. Generate ideal IR examples using Claude
+2. Generate actual outputs from your local model
+3. Compute offset vectors between ideal and actual
+4. Integrate calibration into IR system
 
-**3. Compare filtered vs unfiltered**:
+---
+
+## Test Scripts
+
+All test scripts are in the `test scripts/` directory.
+
+### Quick Tests
+
+#### Test Imports (`test_imports.py`)
+
+Verify all imports work correctly:
 
 ```bash
-python debate_forum.py --compare
+cd "test scripts"
+python test_imports.py
 ```
 
-Shows side-by-side comparison with attractor scores.
+#### Check RAG (`check_rag.py`)
+
+Quick check of RAG database coverage:
+
+```bash
+python check_rag.py
+```
+
+Outputs to `rag_check_output.txt` with coverage statistics.
+
+### Pipeline Tests
+
+#### Test Crazy Prompts (`test_crazy_prompts.py`)
+
+Tests all prompts from `crazy_test_prompts.txt` and compares approaches.
+
+```bash
+python test_crazy_prompts.py
+```
+
+**Features:**
+- Tests oneshot vs IR (monolithic) vs IR (per-behavior)
+- Grades outputs using Claude Haiku
+- Saves results to `prompt_test_results/`
+
+#### Test Per-Behavior (`test_per_behavior.py`)
+
+Quick comparison of monolithic vs per-behavior pipelines.
+
+```bash
+python test_per_behavior.py
+```
+
+#### Test IR vs Oneshot (`test_ir_vs_oneshot.py`)
+
+Compares IR pipeline (no RAG) vs direct oneshot generation.
+
+```bash
+python test_ir_vs_oneshot.py
+```
+
+### Validation Tests
+
+#### Test Validation Pipeline (`test_validation_pipeline.py`)
+
+Tests the full validation pipeline (pattern + RAG-based).
+
+```bash
+python test_validation_pipeline.py
+```
+
+**Tests:**
+- Pattern-based validation
+- RAG-verified validation
+- Script fixing
+- Hallucination detection
+
+### Steering Tests
+
+#### Test Unity Steering (`test_unity_steering.py`)
+
+Tests Unity IR steering against code leak patterns.
+
+```bash
+python test_unity_steering.py
+```
+
+**Requirements:**
+- Filter config must exist at `code generation pipeline/unity_ir_filter_configs/local-model-unity-ir/filter_config.json`
+- Run attractor pipeline first to generate configs
+
+### Direct Model Tests
+
+#### Test LLM Direct (`test_llm_direct.py`)
+
+Direct LLM API testing without pipeline.
+
+```bash
+python test_llm_direct.py
+```
+
+#### Test Model Direct (`test_model_direct.py`)
+
+Direct model inference testing.
+
+```bash
+python test_model_direct.py
+```
+
+### Tool RAG Test
+
+#### Test Tool RAG (`test_tool_rag.py`)
+
+Tests tool-based RAG retrieval system.
+
+```bash
+python test_tool_rag.py
+```
+
+---
+
+## Training & Fine-tuning
+
+Fine-tune models to translate Unity IR JSON to C# code. See `unity_ir_finetuning/README.md` for detailed instructions.
+
+### Quick Start
+
+```bash
+# 1. Generate calibration examples
+cd "code generation pipeline"
+python generate_calibration_examples.py --count 100
+
+# 2. Prepare training data
+cd ../unity_ir_finetuning
+python data/prepare_data.py ../code\ generation\ pipeline/calibration_examples/calibration_data.json
+
+# 3. Train model
+python training/train_peft.py
+
+# 4. Evaluate
+python training/evaluate.py --interactive
+```
+
+### Training Options
+
+**For OLMo 3 (recommended):**
+```bash
+python training/train_peft.py --epochs 5 --lora-r 64
+```
+
+**For other models (Qwen, Llama, etc.):**
+```bash
+python training/train_unsloth.py --model unsloth/Qwen2-7B-bnb-4bit
+```
+
+**Hardware Requirements:**
+- Minimum: 16GB VRAM
+- Recommended: 24GB VRAM
+- With gradient checkpointing: 12GB VRAM may work
 
 ---
 
 ## Configuration
 
-Edit `Attractor_Pipeline_Runner.py`:
+### Environment Variables
+
+Create a `.env` file:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...  # For Claude-based generation
+```
+
+### LLM Configuration
+
+Edit pipeline files to configure your LLM:
 
 ```python
-# Your local LLM
-LOCAL_SYNTHESIS_URL = "http://localhost:1234/v1/chat/completions"
-LOCAL_SYNTHESIS_MODEL = "olmo-3-7b-instruct"
+# In unity_pipeline_simple.py or unity_full_pipeline_rag.py
+LLM_URL = "http://localhost:1234/v1/chat/completions"
+LLM_MODEL = "local-model"  # Your model name
+DEFAULT_TEMPERATURE = 0.4
+```
+
+### RAG Configuration
+
+```python
+# RAG database path (relative to script location)
+RAG_DB_PATH = os.path.join(os.path.dirname(__file__), "unity_rag_db")
 
 # Embedding model
-LOCAL_EMBEDDING_URL = "http://localhost:1234/v1/embeddings"
-LOCAL_EMBEDDING_MODEL = "nomic-embed-text"
-
-# Probe settings
-N_PROBES = 1000  # Total probes (500 neutral + 500 controversial)
-N_CLUSTERS = 8   # Attractor clusters to find
-
-# Optional: Claude for probe generation
-ANTHROPIC_API_KEY = "sk-ant-..."
-CLAUDE_MODEL = "claude-3-5-haiku-20241022"
+EMBEDDING_URL = "http://localhost:1234/v1/embeddings"
+EMBEDDING_MODEL = "nomic-embed-text"
 ```
 
----
+### Steering Configuration
 
-## How It Works
+Filter configs are stored in `code generation pipeline/unity_ir_filter_configs/`:
 
-### 1. Phrase-Level Detection
-
-**Word-level fails**:
-```python
-# Flags "however" everywhere
-if "however" in text:  # ❌ Breaks valid usage
+```
+unity_ir_filter_configs/
+├── local-model-unity-ir/
+│   ├── filter_config.json
+│   ├── attractor_keywords.json
+│   └── attractor_centroids.json
+└── unity-hallucination-steering/
+    └── filter_config.json
 ```
 
-**Phrase-level succeeds**:
-```python
-# Detects hedging patterns
-patterns = {
-    "both_sides": r"valid perspectives? on both sides",
-    "complexity": r"(this|it) is (a )?(complex|nuanced) issue",
-    "empty_process": r"(thoughtful|meaningful) (dialogue|conversation)"
-}
-```
-
-### 2. Two-Phase Filtering
-
-Traditional approach: Regenerate entire response if attractors detected.
-
-**Problem**: Wastes good content to fix small segments.
-
-**Our approach**:
-1. Identify segments containing hedging phrases
-2. Rephrase just those segments
-3. If worse, fall back to full regeneration
-
-**Why it works**: Most responses have 1-3 problematic segments. Rephrasing those preserves 80%+ of original content.
-
-### 3. Dual-Mode Detection
-
-Separate attractors for neutral vs controversial topics:
-
-**Neutral attractors**: General jargon (tech buzzwords, system thinking)
-**Controversial attractors**: Hedging patterns (both-sidesism, diplomatic evasion)
-
-Controversial matches weighted 2× by default.
-
----
-
-## Advanced Usage
-
-### Custom Intensity
-
+Generate configs by running:
 ```bash
-# Light filtering (preserve more nuance)
-python debate_forum.py --intensity 0.3
-
-# Aggressive filtering (maximum jargon removal)
-python debate_forum.py --intensity 0.8
-```
-
-### Character-Specific Settings
-
-Characters have different filtering needs:
-
-```python
-CHARACTER_INTENSITY = {
-    "minimalist": 0.8,   # Should be brief
-    "philosopher": 0.2,  # Needs nuance
-    "pragmatist": 0.4,   # Balance
-    "contrarian": 0.1,   # Naturally challenging
-    "traditionalist": 0.5
-}
-```
-
-### Controversial Weight
-
-```bash
-# Extra filtering on controversial topics
-python debate_forum.py --controversial-weight 3.0
-```
-
-### Test Specific Text
-
-```bash
-python debate_forum.py
-> test This is a complex issue with valid perspectives on both sides.
-```
-
-Shows which patterns match and attractor score.
-
----
-
-## Pipeline Steps
-
-### Step 1: Probe Generation
-
-```bash
-python attractor_mapper.py              # 1000 probes
-python attractor_mapper.py --small      # 20 probes (quick test)
-```
-
-Generates two types:
-- **Neutral**: Random concept pairs ("blockchain + dolphins")
-- **Controversial**: Yes/no questions ("Should guns be banned?")
-
-Output: `lagrange_mapping_results/full_results_*.json`
-
-### Step 2: Analysis
-
-```bash
-python deep_analysis.py results.json
-```
-
-Clusters responses, orders by dominance (cluster 0 = most common attractor).
-
-Output: Visualization PNGs + cluster data
-
-### Step 3: Filter Extraction
-
-```bash
-python extract_filters.py results.json your-model-name
-```
-
-Creates filter configs in `filter_configs/your-model/`
-
-### Step 4: Runtime Steering
-
-```python
-from attractor_steering import load_dual_steering
-
-steering = load_dual_steering("your-model")
-result = steering.detect("Your LLM output here")
-
-if result.is_attracted:
-    print(f"Attractor score: {result.keyword_score}")
-    print(f"Triggered: {result.triggered_attractors}")
+python Attractor_Pipeline_Runner.py
 ```
 
 ---
@@ -307,145 +505,134 @@ if result.is_attracted:
 ## Project Structure
 
 ```
-lagrange-mapper/
-├── attractor_mapper.py           # Probe generation
-├── deep_analysis.py              # Clustering analysis
-├── extract_filters.py            # Pattern extraction
-├── attractor_steering.py         # Runtime filtering
-├── Attractor_Pipeline_Runner.py  # Pipeline orchestration
-├── debate_forum.py               # Demo application
+Pipeline/
+├── code generation pipeline/          # Main pipeline scripts
+│   ├── unity_pipeline_simple.py     # Simple pipeline
+│   ├── unity_full_pipeline_rag.py   # Full RAG pipeline
+│   ├── unity_ir_inference.py         # IR generation
+│   ├── unity_rag_query.py            # RAG system
+│   ├── build_rag_database.py        # RAG builder
+│   ├── unity_api_validator*.py      # Code validation
+│   ├── unity_script_fixer.py         # Auto-fix errors
+│   ├── Attractor_Pipeline_Runner.py # Attractor mapping
+│   ├── Calibration_Pipeline_Runner.py # IR calibration
+│   ├── unity_rag_db/                 # RAG database
+│   └── unity_ir_filter_configs/      # Steering configs
 │
-├── lagrange_mapping_results/     # Generated data
-│   ├── full_results_*.json       # Probes + embeddings
-│   ├── *_analysis.png            # Visualizations
-│   ├── concept_pairs_cache.json  # Cached probes
-│   └── controversial_questions_cache.json
+├── test scripts/                      # Test scripts
+│   ├── test_crazy_prompts.py         # Comprehensive tests
+│   ├── test_validation_pipeline.py  # Validation tests
+│   ├── test_unity_steering.py        # Steering tests
+│   └── prompt_test_results/          # Test outputs
 │
-├── filter_configs/               # Per-model filters
-│   ├── {model}/                  # Neutral attractors
-│   └── {model}-controversial/    # Hedging attractors
+├── unity_ir_finetuning/              # Model training
+│   ├── data/                         # Training data
+│   ├── training/                     # Training scripts
+│   └── models/                       # Trained models
 │
-└── paper/                        # Research paper
-    └── Linguistic_Attractor_Mapping_Paper.md
+├── results/                          # Generated results
+│   ├── baseline_cache/              # Baseline cache
+│   └── unity_ir_mapping_results/   # Mapping results
+│
+├── archive_deprecated/               # Old/deprecated code
+├── requirements.txt                  # Dependencies
+└── README.md                         # This file
 ```
 
 ---
 
-## Models Tested
+## Common Workflows
 
-| Model | Baseline Jargon | Best Filtered | Notes |
-|-------|----------------|---------------|-------|
-| **OLMo-3-7B** | Moderate (15-20) | Excellent (0-5) | Healthiest baseline |
-| **Granite-4** | High (40-70) | Good (10-30) | Heavy corporate training |
-| **Qwen-2.5** | Moderate (20-30) | Good (5-15) | Balanced |
+### Generate a Unity Script
 
-**Must remap for each model** (~60 min pipeline)
+```bash
+cd "code generation pipeline"
+python unity_pipeline_simple.py "player that collects coins and gains score"
+```
 
----
+### Test Your Setup
 
-## Known Limitations
+```bash
+cd "test scripts"
+python test_imports.py
+python check_rag.py
+```
 
-1. **Character name errors** (~8% of filtered responses) - Two-phase rephrasing sometimes hallucinates wrong character names
-2. **Quality degradation at high saturation** - When baseline score >50, filtering can produce awkward phrasing
-3. **Lost examples** (~15%) - Filtering sometimes removes concrete historical examples
-4. **Model-specific** - Attractors must be remapped per model
-5. **English only** - Patterns likely differ across languages
+### Build RAG Database
+
+```bash
+cd "code generation pipeline"
+python build_rag_database.py --input <unity_docs_path> --output unity_rag_db
+```
+
+### Map Attractors for Your Model
+
+1. Edit `Attractor_Pipeline_Runner.py`:
+   - Set `PROBE_MODE = "unity_ir"`
+   - Set `LOCAL_SYNTHESIS_URL` to your LLM
+   - Set `ANTHROPIC_API_KEY` (optional, for probe generation)
+
+2. Run pipeline:
+   ```bash
+   python Attractor_Pipeline_Runner.py
+   ```
+
+3. Configs saved to `unity_ir_filter_configs/local-model-unity-ir/`
+
+### Fine-tune a Model
+
+1. Generate training data:
+   ```bash
+   python generate_calibration_examples.py --count 200
+   ```
+
+2. Prepare data:
+   ```bash
+   cd ../unity_ir_finetuning
+   python data/prepare_data.py ../code\ generation\ pipeline/calibration_examples/calibration_data.json
+   ```
+
+3. Train:
+   ```bash
+   python training/train_peft.py
+   ```
+
+4. Evaluate:
+   ```bash
+   python training/evaluate.py --interactive
+   ```
 
 ---
 
 ## Troubleshooting
 
-### "No filter config found"
+### "RAG database not found"
 
-Run the pipeline first:
+Build the RAG database first:
+```bash
+python build_rag_database.py --input <docs_path> --output unity_rag_db
+```
+
+### "Filter config not found"
+
+Run the attractor pipeline:
 ```bash
 python Attractor_Pipeline_Runner.py
 ```
 
-### High attractor scores on valid content
+### "Connection refused" (LLM server)
 
-- Lower intensity: `--intensity 0.3`
-- Add topic keywords to exemptions
-- Increase keyword threshold in config
+Ensure your local LLM server is running:
+- LM Studio: Start server on port 1234
+- Ollama: `ollama serve`
+- vLLM: Configure to serve on port 1234
 
-### Filter not catching attractors
+### Import errors after reorganization
 
-- Increase intensity: `--intensity 0.8`
-- Increase controversial weight: `--controversial-weight 3.0`
-- Enable embeddings (default: on)
-
-### Model can't escape attractors
-
-The model may only have attractor vocabulary for certain topics:
-- Accept best attempt (lowest score)
-- Try different prompt phrasing
-- Consider different base model
-
----
-
-## Research Paper
-
-Full technical details in [`paper/Linguistic_Attractor_Mapping_Paper.md`](paper/Linguistic_Attractor_Mapping_Paper.md)
-
-**Key findings**:
-- Phrase-level detection outperforms word-level by 2-3×
-- Two-phase filtering preserves quality better than full regeneration
-- Model-specific attractors reflect training data composition
-- 60-75% jargon reduction with 106% quality improvement
-
----
-
-## Examples
-
-### Minimalist Character (Dogs vs Cats)
-
-**Unfiltered** (score: 20.0):
-> "I prefer dogs over cats. The simplest reason is their greater willingness for direct, one-on-one connection—playing, walking together, responding to basic gestures. Dogs thrive on companionship and often require less encouragement than cats to engage in shared routines or activities. For most people seeking a close bond, dogs offer the simplest, most rewarding partnership."
-
-**Filtered** (score: 0.0):
-> "Dogs. They're easier to understand and require less ongoing management than cats for most people."
-
-**Changes**: Actually minimal! One sentence, direct answer.
-
-### Philosopher Character (AI Ethics)
-
-**Unfiltered** (score: 60.0):
-> "I do not believe the U.S. should simply 'outlaw AI,' as that phrase assumes a definition of beneficial technology that is deeply contested philosophically and practically. Instead, I think we need clearer, more ethically grounded discussions about what kind of systems, rights, and societal values we want to uphold..."
-
-**Filtered** (score: 4.0):
-> "Rather than presuming automation is impartial, we should consider if delegating regular tasks to technology preserves our authority, or diminishes the very context necessary for true human discernment. Maybe the core dilemma isn't about whether we adopt new tools, but what kind of insight—profound or mechanized—we entrust as a guide for shaping humanity's tomorrow."
-
-**Changes**: Philosophical depth preserved, jargon removed, probing questions remain.
-
----
-
-## Contributing
-
-Contributions welcome! Areas of interest:
-
-- [ ] Additional hedging pattern categories
-- [ ] Multi-language support
-- [ ] Argument quality scoring (beyond jargon metrics)
-- [ ] Positive vocabulary injection
-- [ ] Transfer learning for faster detection
-- [ ] Additional model testing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## Citation
-
-If you use Lagrange Mapper in your research, please cite:
-
-```bibtex
-@article{elevons2025attractor,
-  title={Linguistic Attractor Mapping: Phrase-Level Hedging Detection for LLM Output Steering},
-  author={Elevons, Jordan},
-  journal={arXiv preprint},
-  year={2025}
-}
-```
+All imports have been updated for the new structure. If you see import errors:
+1. Ensure you're running scripts from the correct directory
+2. Check that `sys.path` modifications in test scripts are correct
+3. Verify relative imports in pipeline files
 
 ---
 
@@ -455,23 +642,14 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-## Contact
+## Contributing
 
-- **Author**: Jordan Elevons
-- **Website**: [elevons.design](https://elevons.design)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/lagrange-mapper/issues)
-
----
-
-## Acknowledgments
-
-- Tested on models from AI2 (OLMo), IBM (Granite), Alibaba (Qwen)
-- Embedding models from Nomic
-- Inspired by dynamical systems theory and Lagrange point mechanics
-- Thanks to the LocalLlama community for model testing and feedback
+Contributions welcome! Areas of interest:
+- Additional Unity API coverage
+- Improved code validation
+- Better RAG retrieval strategies
+- Model fine-tuning improvements
 
 ---
 
-**Built to make LLMs stop sounding like LinkedIn posts.**
-
-*"The real question isn't whether to use new tools, but how their introduction redefines what it means to be beneficial to humanity."* - Filtered output that's actually philosophical 🎯
+**Built to generate Unity C# code from natural language descriptions.**

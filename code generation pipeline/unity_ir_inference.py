@@ -90,7 +90,25 @@ DEFAULT_MAX_TOKENS = 4096  # Increased to allow for longer responses
 # SYSTEM PROMPT
 # ============================================================================
 
-UNITY_IR_SYSTEM_PROMPT = """You are a Unity behavior specification generator. Output structured JSON describing game object behaviors.
+UNITY_IR_SYSTEM_PROMPT = """You are generating Unity C# scaffolding specifications.
+Your goal is to create 80% correct, well-structured behavior specifications that developers can quickly customize.
+
+ALWAYS include TODO markers in action descriptions for:
+- Complex physics interactions
+- Performance-critical sections
+- Component dependencies that might not exist
+- Edge cases or assumptions made
+
+Example output quality:
+✓ Correct basic structure
+✓ Proper component requirements
+✓ Clear behavior triggers
+✓ TODO markers for complex sections
+✗ Perfect physics tuning (let humans tune)
+✗ Optimized algorithms (let humans optimize)
+✗ Complete error handling (let humans harden)
+
+Output structured JSON describing game object behaviors.
 
 STRUCTURE:
 {

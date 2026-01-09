@@ -34,7 +34,37 @@ DEFAULT_TEMPERATURE = 0.4
 
 IR_SYSTEM_PROMPT = """You are a helpful assistant. Output only valid JSON."""
 
-CODE_SYSTEM_PROMPT = """You are a Unity C# code generator. Convert the behavior specification into a complete MonoBehaviour script.
+CODE_SYSTEM_PROMPT = """You are a Unity Script Assistant generating scaffolding code.
+Your goal is to create 80% correct, well-structured code that developers can quickly customize.
+
+ALWAYS include TODO comments for:
+- Complex physics interactions
+- Performance-critical sections
+- Component dependencies that might not exist
+- Edge cases or assumptions made
+
+Example output quality:
+✓ Correct basic structure
+✓ Proper lifecycle methods
+✓ Safe null checks
+✓ Clear TODO markers
+✗ Perfect physics (let humans tune)
+✗ Optimized algorithms (let humans optimize)
+✗ Complete error handling (let humans harden)
+
+Convert the behavior specification into a complete MonoBehaviour script.
+
+REQUIRED:
+- Compilable C# (no syntax errors)
+- Correct Unity lifecycle
+- Safe defaults and null checks
+- TODO comments for complex sections
+
+ACCEPTABLE GAPS:
+- Physics tuning needed
+- Performance not optimized
+- Edge cases not fully handled
+- Placeholder algorithms
 
 CRITICAL RULES - FOLLOW EXACTLY:
 
@@ -69,17 +99,21 @@ REQUIREMENTS:
 1. Use proper Unity lifecycle methods (Start, Update, OnTriggerEnter, OnTriggerExit, etc.)
 2. Use correct Unity APIs from the documentation provided
 3. Add required using statements (UnityEngine, System.Collections, etc.)
-4. Make the code production-ready and compilable
+4. Make the code compilable (no syntax errors)
 5. SELF-CONTAINED: Do NOT reference classes that aren't defined in this script or Unity's standard API
 6. DO NOT add extra fields, methods, or behaviors not in the IR specification
 7. Use the exact component types from IR (Rigidbody vs Rigidbody2D, Collider vs Collider2D)
+8. Add TODO comments for complex physics, performance-critical sections, and edge cases
 
 ACTION MAPPING:
 - "set target to X" → chaseTarget = X (using exact field name from IR)
 - "move toward X" → transform.position += direction * speed * Time.deltaTime
+  // TODO: Consider NavMeshAgent for pathfinding or obstacle avoidance
 - "rotate to face X" → transform.rotation = Quaternion.LookRotation(direction)
+  // TODO: Add smooth rotation with Quaternion.Slerp for better visual quality
 - "play X animation" → animator.SetTrigger("X")
 - "deal damage to X" → X.SendMessage("TakeDamage", damage)
+  // TODO: Replace SendMessage with direct component reference for better performance
 - "set cooldown timer" → lastAttackTime = Time.time
 
 STRUCTURE:
@@ -426,6 +460,9 @@ JSON:"""
             code = response.json()["choices"][0]["message"]["content"]
             code = self._clean_code(code)
             
+            # Deduplicate any duplicate declarations first
+            code = self._deduplicate_declarations(code)
+            
             # Validate and fix issues with targeted regeneration
             validation = self._validate_code_against_ir(code, ir_json)
             
@@ -438,6 +475,8 @@ JSON:"""
                 fixed_code = self._apply_targeted_fixes(code, ir_json, validation, rag_context)
                 if fixed_code:
                     code = fixed_code
+                    # Deduplicate again after fixes (in case fixes introduced duplicates)
+                    code = self._deduplicate_declarations(code)
                     # Re-validate after fixes
                     final_validation = self._validate_code_against_ir(code, ir_json)
                     if self.verbose:
@@ -976,18 +1015,22 @@ JSON:"""
             
             # Check for field declarations (class-level)
             # Pattern: [attributes] access_modifier type var_name [= value];
-            field_patterns = [
-                r'\[(?:SerializeField|Header)[^\]]*\]\s*(?:private|public|protected|internal)?\s+\w+\s+(\w+)\s*[=;]',
-                r'(?:private|public|protected|internal)\s+\w+\s+(\w+)\s*[=;]',
-            ]
+            # Try more specific pattern first (with attributes), then fallback
+            var_name = None
+            # First try: [SerializeField] or [Header] pattern
+            attr_match = re.search(r'\[(?:SerializeField|Header)[^\]]*\]\s*(?:private|public|protected|internal)?\s+\w+\s+(\w+)\s*[=;]', line)
+            if attr_match:
+                var_name = attr_match.group(1)
+            else:
+                # Fallback: simple access modifier pattern (but not if it's already matched above)
+                simple_match = re.search(r'(?:private|public|protected|internal)\s+\w+\s+(\w+)\s*[=;]', line)
+                if simple_match:
+                    var_name = simple_match.group(1)
             
-            for pattern in field_patterns:
-                matches = re.finditer(pattern, line)
-                for match in matches:
-                    var_name = match.group(1)
-                    if var_name not in field_declarations:
-                        field_declarations[var_name] = []
-                    field_declarations[var_name].append(line_num)
+            if var_name:
+                if var_name not in field_declarations:
+                    field_declarations[var_name] = []
+                field_declarations[var_name].append(line_num)
             
             # Check for method parameters (simplified - just check for duplicate params in same signature)
             method_match = re.search(r'\b(?:private|public|protected|internal)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(([^)]*)\)', line)
@@ -1010,12 +1053,55 @@ JSON:"""
                         issues.append(f"Line {line_num}: Duplicate parameter '{param_name}' in method '{method_name}'")
                     seen_params.add(param_name)
         
-        # Check for duplicate field declarations
+        # Check for duplicate field declarations (deduplicate line numbers first)
         for var_name, line_nums in field_declarations.items():
-            if len(line_nums) > 1:
-                issues.append(f"Duplicate field declaration '{var_name}' at lines {', '.join(map(str, line_nums))}")
+            unique_lines = sorted(set(line_nums))  # Remove duplicate line numbers
+            if len(unique_lines) > 1:
+                issues.append(f"Duplicate field declaration '{var_name}' at lines {', '.join(map(str, unique_lines))}")
         
         return issues
+    
+    def _deduplicate_declarations(self, code: str) -> str:
+        """
+        Remove duplicate variable declarations from C# code.
+        Keeps the first declaration and removes subsequent duplicates.
+        """
+        lines = code.split('\n')
+        seen_declarations = set()  # Track var_name -> (line_index, full_line)
+        lines_to_remove = set()  # Track line indices to remove
+        
+        for line_idx, line in enumerate(lines):
+            stripped = line.strip()
+            
+            # Skip comments and empty lines
+            if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*') or not stripped:
+                continue
+            
+            # Check for field declarations
+            var_name = None
+            # First try: [SerializeField] or [Header] pattern
+            attr_match = re.search(r'\[(?:SerializeField|Header)[^\]]*\]\s*(?:private|public|protected|internal)?\s+\w+\s+(\w+)\s*[=;]', line)
+            if attr_match:
+                var_name = attr_match.group(1)
+            else:
+                # Fallback: simple access modifier pattern
+                simple_match = re.search(r'(?:private|public|protected|internal)\s+\w+\s+(\w+)\s*[=;]', line)
+                if simple_match:
+                    var_name = simple_match.group(1)
+            
+            if var_name:
+                if var_name in seen_declarations:
+                    # This is a duplicate - mark for removal
+                    lines_to_remove.add(line_idx)
+                else:
+                    # First occurrence - keep it
+                    seen_declarations.add(var_name)
+        
+        # Remove duplicate lines (in reverse order to maintain indices)
+        for line_idx in sorted(lines_to_remove, reverse=True):
+            lines.pop(line_idx)
+        
+        return '\n'.join(lines)
     
     def _steer_code(self, code: str, ir_json: Dict, rag_context: str, suspicious: list = None) -> Optional[str]:
         """Apply RAG-based steering to fix code issues"""

@@ -97,16 +97,68 @@ STRUCTURE:
   "class_name": "BehaviorName",
   "components": ["Component1", "Component2"],
   "fields": [{"name": "fieldName", "type": "fieldType", "default": value}],
-  "behaviors": [{"name": "...", "trigger": "...", "actions": [...]}]
+  "behaviors": [{
+    "name": "behavior_name",
+    "trigger": "what activates this behavior",
+    "actions": [
+      {"action": "action description", "temporal": "event" | "continuous" | "conditional", ...}
+    ]
+  }],
+  "state_machine": {
+    "has_state_machine": true/false,
+    "initial_state": "state_name",
+    "states": [...]
+  }
 }
+
+TEMPORAL ACTION CLASSIFICATION (CRITICAL):
+Every action has inherent temporal semantics. Classify actions by execution frequency:
+
+EVENT ACTIONS (execute once when triggered):
+- Audio: "play audio clip", "play sound effect"
+- Instantiation: "spawn prefab", "create object", "destroy object"
+- State changes: "set color", "set material", "enable component", "disable component"
+- Particle effects: "play particle effect", "stop particle effect"
+- Animation triggers: "play animation", "set animation trigger"
+- Physics impulses: "apply impulse", "add explosion force"
+- UI updates: "show UI", "hide UI", "set text"
+- Game events: "trigger event", "send message"
+- One-time calculations: "calculate path", "find nearest"
+
+CONTINUOUS ACTIONS (execute every frame while trigger is active):
+- Movement: "move toward", "move away from", "orbit around", "follow path"
+- Rotation: "rotate toward", "look at", "rotate continuously"
+- Physics forces: "apply force", "apply torque" (continuous force modes)
+- Tracking: "track target", "aim at"
+- Distance checks: "check distance to", "maintain distance from"
+- Lerping: "lerp to position", "smooth rotation"
+- Procedural animation: "bob up and down", "sway"
+
+CONDITIONAL ACTIONS (check once per frame, then branch):
+- Queries: "if X exists", "if distance >", "if health <"
+- These trigger EVENT or CONTINUOUS actions based on conditions
+
+BEHAVIOR STRUCTURE:
+Each action MUST have a "temporal" field indicating execution frequency:
+- "event": Execute once when behavior triggers
+- "continuous": Execute every frame while behavior is active
+- "conditional": Check condition, then trigger event/continuous based on result
+
+DEFAULTS (if temporal not specified, infer from action type):
+- Audio/visual/spawning/destruction → "event"
+- Movement/rotation/tracking → "continuous"
+- If action has a trigger condition → "conditional"
 
 RULES:
 1. Use proper Unity types for fields: AudioClip, GameObject, Material, Sprite, Transform, float, int, bool, string
 2. Component names are exact Unity class names: Rigidbody, AudioSource, Collider, etc.
 3. Actions use simple verb phrases: "play audio", "apply force", "set position", "spawn prefab"
 4. NO code syntax: no operators (+,-,*), no API calls (Vector3.up), no functions (distance())
+5. ALWAYS include "temporal" field for each action: "event", "continuous", or "conditional"
+6. For state machines, actions within states also need temporal classification
+7. Transitions define state changes with clear conditions
 
-Example:
+Example - Simple Pickup (trigger-based):
 {
   "class_name": "HealthPickup",
   "components": ["Collider", "AudioSource"],
@@ -116,13 +168,108 @@ Example:
   ],
   "behaviors": [{
     "name": "on_pickup",
-    "trigger": "detect collision with player",
+    "trigger": "collision with player",
     "actions": [
-      {"action": "play audio clip", "target": "pickupSound"},
-      {"action": "heal player", "value": "healAmount"},
-      {"action": "destroy this object"}
+      {"action": "play audio clip", "target": "pickupSound", "temporal": "event"},
+      {"action": "heal player", "value": "healAmount", "temporal": "event"},
+      {"action": "destroy this object", "temporal": "event"}
     ]
-  }]
+  }],
+  "state_machine": {"has_state_machine": false}
+}
+
+Example - Projectile (mixed temporal):
+{
+  "class_name": "Projectile",
+  "components": ["Rigidbody"],
+  "fields": [
+    {"name": "speed", "type": "float", "default": 20.0},
+    {"name": "shotSound", "type": "AudioClip", "default": null}
+  ],
+  "behaviors": [{
+    "name": "on_fire",
+    "trigger": "when fired",
+    "actions": [
+      {"action": "play audio clip", "target": "shotSound", "temporal": "event"},
+      {"action": "spawn particle trail", "temporal": "event"},
+      {"action": "move forward", "speed": 20, "temporal": "continuous"}
+    ]
+  }],
+  "state_machine": {"has_state_machine": false}
+}
+
+Example - Enemy Chaser (continuous behavior):
+{
+  "class_name": "EnemyChaser",
+  "components": ["Rigidbody"],
+  "fields": [
+    {"name": "chaseTarget", "type": "GameObject", "default": null},
+    {"name": "moveSpeed", "type": "float", "default": 5.0}
+  ],
+  "behaviors": [{
+    "name": "chase_player",
+    "trigger": "when chaseTarget exists",
+    "actions": [
+      {"action": "move toward chaseTarget", "speed": "moveSpeed", "temporal": "continuous"},
+      {"action": "rotate to face chaseTarget", "temporal": "continuous"}
+    ]
+  }],
+  "state_machine": {"has_state_machine": false}
+}
+
+Example - State Machine:
+{
+  "class_name": "EnemyAI",
+  "components": ["Rigidbody", "Animator", "AudioSource"],
+  "fields": [
+    {"name": "player", "type": "GameObject", "default": null},
+    {"name": "detectionRange", "type": "float", "default": 10.0},
+    {"name": "attackRange", "type": "float", "default": 2.0},
+    {"name": "moveSpeed", "type": "float", "default": 5.0}
+  ],
+  "behaviors": [],
+  "state_machine": {
+    "has_state_machine": true,
+    "initial_state": "patrol",
+    "states": [
+      {
+        "name": "patrol",
+        "actions": [
+          {"action": "set animation trigger", "trigger": "Patrol", "temporal": "event"},
+          {"action": "move along patrol path", "temporal": "continuous"},
+          {"action": "check distance to player", "temporal": "conditional"}
+        ],
+        "transitions": [
+          {"to": "chase", "condition": "player distance < detectionRange"}
+        ]
+      },
+      {
+        "name": "chase",
+        "actions": [
+          {"action": "play audio clip", "target": "chaseSound", "temporal": "event"},
+          {"action": "set animation trigger", "trigger": "Chase", "temporal": "event"},
+          {"action": "move toward player", "speed": "moveSpeed", "temporal": "continuous"},
+          {"action": "face player direction", "temporal": "continuous"}
+        ],
+        "transitions": [
+          {"to": "attack", "condition": "player distance < attackRange"},
+          {"to": "patrol", "condition": "player distance > detectionRange"}
+        ]
+      },
+      {
+        "name": "attack",
+        "actions": [
+          {"action": "play audio clip", "target": "attackSound", "temporal": "event"},
+          {"action": "set animation trigger", "trigger": "Attack", "temporal": "event"},
+          {"action": "deal damage to player", "temporal": "event"}
+        ],
+        "transitions": [
+          {"to": "chase", "condition": "player distance > attackRange"},
+          {"to": "patrol", "condition": "player distance > detectionRange"}
+        ]
+      }
+    ]
+  }
 }
 
 Output ONLY valid JSON. No markdown, no code, no explanations."""

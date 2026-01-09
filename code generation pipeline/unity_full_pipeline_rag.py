@@ -57,6 +57,25 @@ DOCS_PER_BEHAVIOR = 6
 
 CODE_SYSTEM_PROMPT = """You are a Unity C# code generator. Convert the behavior specification into a complete MonoBehaviour script.
 
+CRITICAL: TEMPORAL EXECUTION MODEL
+
+Unity executes code frame-by-frame (~60 times per second). Actions must execute at the correct frequency based on their "temporal" classification:
+
+1. EVENT ACTIONS (temporal: "event" - once per trigger):
+   - Execute in: OnTriggerEnter, OnCollisionEnter, button callbacks, state entry methods, condition change handlers
+   - Examples: PlayOneShot(), Instantiate(), Destroy(), SetTrigger(), one-time color changes
+   - NEVER call in Update() or FixedUpdate() unless protected by state change detection or cooldowns
+
+2. CONTINUOUS ACTIONS (temporal: "continuous" - every frame while active):
+   - Execute in: Update(), FixedUpdate(), LateUpdate(), state update methods
+   - Examples: transform.position +=, Rigidbody.AddForce(ForceMode.Force), Vector3.Lerp()
+   - Must be called repeatedly for smooth motion/rotation
+   - Always multiply by Time.deltaTime for frame-rate independence
+
+3. CONDITIONAL ACTIONS (temporal: "conditional" - check once per frame, trigger events):
+   - Execute in: Update() with state tracking to prevent re-triggering
+   - Pattern: if (condition && !wasTrue) { ExecuteEvent(); wasTrue = true; }
+
 CRITICAL RULES - FOLLOW EXACTLY:
 
 1. CLASS NAME: Use EXACTLY the "class_name" from IR - no changes, no underscores, no prefixes
@@ -71,14 +90,10 @@ CRITICAL RULES - FOLLOW EXACTLY:
    - Store in a private field (e.g., Rigidbody _rigidbody)
    - If IR says "Rigidbody", use Rigidbody NOT Rigidbody2D
 4. BEHAVIORS: Implement EXACTLY each behavior from "behaviors":
-   - Use the behavior "name" as a method name or comment
-   - Map "trigger" to Unity method:
-     * "enters detection radius/range" → OnTriggerEnter
-     * "exits detection radius/range" → OnTriggerExit  
-     * "when X exists and Y" → Update() with condition
-     * "when reaching X" → Update() with condition check
-     * "when timer expires" → Update() with timer check
-   - Implement ALL actions from the behavior's "actions" array
+   - Check each action's "temporal" field
+   - Map "temporal": "event" → Execute once in appropriate event handler
+   - Map "temporal": "continuous" → Execute every frame in Update/FixedUpdate
+   - Map "temporal": "conditional" → Check condition, trigger events on change
    - DO NOT skip behaviors or add extra behaviors
 
 FIELD NAMING RULES:
@@ -87,7 +102,7 @@ FIELD NAMING RULES:
 - Preserve exact spelling and casing from IR
 
 REQUIREMENTS:
-1. Use proper Unity lifecycle methods (Start, Update, OnTriggerEnter, OnTriggerExit, etc.)
+1. Use proper Unity lifecycle methods (Start, Update, FixedUpdate, OnTriggerEnter, OnTriggerExit, etc.)
 2. Use correct Unity APIs from the documentation provided
 3. Add required using statements (UnityEngine, System.Collections, etc.)
 4. Make the code production-ready and compilable
@@ -95,24 +110,236 @@ REQUIREMENTS:
 6. DO NOT add extra fields, methods, or behaviors not in the IR specification
 7. Use the exact component types from IR (Rigidbody vs Rigidbody2D, Collider vs Collider2D)
 
-ACTION MAPPING:
-- "set target to X" → chaseTarget = X (using exact field name from IR)
-- "move toward X" → transform.position += direction * speed * Time.deltaTime
-- "rotate to face X" → transform.rotation = Quaternion.LookRotation(direction)
-- "play X animation" → animator.SetTrigger("X")
-- "deal damage to X" → X.SendMessage("TakeDamage", damage)
-- "set cooldown timer" → lastAttackTime = Time.time
+IMPLEMENTATION PATTERNS:
+
+Pattern 1: TRIGGER-BASED BEHAVIORS
+For behaviors with discrete triggers (collision, button press, detection enter/exit):
+```csharp
+private void OnTriggerEnter(Collider other) {
+    if (other.CompareTag("Player")) {
+        // EVENT actions execute here (temporal: "event")
+        audioSource.PlayOneShot(collectSound);  // ✓ Once per trigger
+        Destroy(gameObject);
+    }
+}
+```
+
+Pattern 2: STATE-BASED BEHAVIORS  
+For behaviors with persistent states (idle, chase, attack):
+```csharp
+private enum State { Idle, Chase, Attack }
+private State _currentState = State.Idle;
+private State _previousState;
+
+void Update() {
+    State nextState = DetermineNextState();
+    
+    // Detect state changes
+    if (nextState != _currentState) {
+        ExitState(_currentState);
+        _previousState = _currentState;
+        _currentState = nextState;
+        EnterState(_currentState);  // ✓ EVENT actions here (temporal: "event")
+    }
+    
+    UpdateState(_currentState);  // ✓ CONTINUOUS actions here (temporal: "continuous")
+}
+
+private void EnterState(State state) {
+    // Execute EVENT actions from IR (temporal: "event")
+    switch(state) {
+        case State.Attack:
+            audioSource.PlayOneShot(attackSound);  // ✓ Once on entry
+            GetComponent<Renderer>().material.color = attackColor;
+            animator.SetTrigger("Attack");
+            break;
+    }
+}
+
+private void UpdateState(State state) {
+    // Execute CONTINUOUS actions from IR (temporal: "continuous")
+    switch(state) {
+        case State.Chase:
+            Vector3 dir = (target.position - transform.position).normalized;
+            transform.position += dir * chaseSpeed * Time.deltaTime;  // ✓ Every frame
+            break;
+    }
+}
+```
+
+Pattern 3: COOLDOWN-BASED BEHAVIORS
+For behaviors with timing constraints (fire rate, ability cooldowns):
+```csharp
+private float _lastFireTime = 0f;
+[SerializeField] private float fireRate = 0.5f;
+
+void Update() {
+    if (Input.GetButton("Fire") && Time.time - _lastFireTime >= fireRate) {
+        Fire();  // ✓ EVENT action with rate limiting
+        _lastFireTime = Time.time;
+    }
+}
+```
+
+Pattern 4: CONDITION-BASED BEHAVIORS
+For behaviors that trigger on condition changes:
+```csharp
+private bool _wasInRange = false;
+
+void Update() {
+    bool inRange = Vector3.Distance(transform.position, player.position) < detectionRange;
+    
+    // Detect condition change (temporal: "conditional")
+    if (inRange && !_wasInRange) {
+        OnEnterRange();  // ✓ EVENT actions on condition becoming true
+    } else if (!inRange && _wasInRange) {
+        OnExitRange();   // ✓ EVENT actions on condition becoming false
+    }
+    
+    if (inRange) {
+        TrackPlayer();  // ✓ CONTINUOUS actions while condition is true (temporal: "continuous")
+    }
+    
+    _wasInRange = inRange;
+}
+```
+
+Pattern 5: SIMPLE CONTINUOUS BEHAVIORS
+For behaviors that run every frame:
+```csharp
+void Update() {
+    if (chaseTarget != null) {
+        // CONTINUOUS actions (temporal: "continuous")
+        Vector3 direction = (chaseTarget.transform.position - transform.position).normalized;
+        transform.position += direction * moveSpeed * Time.deltaTime;
+        transform.rotation = Quaternion.LookRotation(direction);
+    }
+}
+```
+
+ACTION MAPPING BY TEMPORAL TYPE:
+
+EVENT (temporal: "event" - call once):
+- "play audio clip" → audioSource.PlayOneShot(clip)
+- "spawn prefab" → Instantiate(prefab, position, rotation)
+- "destroy object" → Destroy(gameObject)
+- "set color" → renderer.material.color = color
+- "set material" → renderer.material = material
+- "set animation trigger" → animator.SetTrigger(trigger)
+- "apply impulse" → rigidbody.AddForce(force, ForceMode.Impulse)
+- "enable component" → component.enabled = true
+- "disable component" → component.enabled = false
+- "send message" → target.SendMessage(methodName)
+- "show UI" → uiObject.SetActive(true)
+- "hide UI" → uiObject.SetActive(false)
+
+CONTINUOUS (temporal: "continuous" - call every frame):
+- "move toward" → transform.position += direction * speed * Time.deltaTime
+- "move away from" → transform.position -= direction * speed * Time.deltaTime
+- "rotate toward" → transform.rotation = Quaternion.RotateTowards(current, target, speed * Time.deltaTime)
+- "look at" → transform.LookAt(target)  [if continuous tracking needed]
+- "apply force" → rigidbody.AddForce(direction * force, ForceMode.Force)  [in FixedUpdate]
+- "apply torque" → rigidbody.AddTorque(torque, ForceMode.Force)  [in FixedUpdate]
+- "lerp to position" → transform.position = Vector3.Lerp(current, target, t * Time.deltaTime)
+- "smooth rotation" → transform.rotation = Quaternion.Slerp(current, target, t * Time.deltaTime)
+- "orbit around" → Calculate orbit position, update transform.position
+- "bob up and down" → transform.position.y += Mathf.Sin(Time.time) * amplitude
+
+CONDITIONAL (temporal: "conditional" - check then trigger):
+- "check distance to X" → float dist = Vector3.Distance(a, b); if (dist < threshold && !wasInRange) { OnEnterRange(); }
+- "if health < X" → if (health < threshold && !wasLowHealth) { OnLowHealth(); wasLowHealth = true; }
+- "if X exists" → if (target != null && !wasExisting) { OnTargetFound(); wasExisting = true; }
+
+FORBIDDEN PATTERNS (CRITICAL BUGS):
+❌ audioSource.PlayOneShot() in Update() without state change detection or cooldown
+❌ Instantiate() in Update() without cooldown/limiting
+❌ animator.SetTrigger() in Update() without state change detection
+❌ Destroy() in Update() without protection
+❌ One-time color/material changes in Update()
+❌ Continuous actions without Time.deltaTime multiplier
+❌ Physics continuous forces in Update() instead of FixedUpdate()
+
+REQUIRED PATTERNS:
+✓ Event actions (temporal: "event") in OnTrigger/OnCollision/State entry/Condition change
+✓ Continuous actions (temporal: "continuous") in Update/FixedUpdate with Time.deltaTime
+✓ State change detection before event actions
+✓ Cooldowns for repeatable events
+✓ Condition change tracking for conditional actions
+✓ Physics continuous actions in FixedUpdate()
+
+COMPONENT-SPECIFIC RULES:
+- AudioSource: 
+  * PlayOneShot() = EVENT (temporal: "event")
+  * Play()/Stop() = EVENT (temporal: "event")
+  * Looping audio: Play() in EnterState, Stop() in ExitState
+  
+- Rigidbody: 
+  * AddForce with Impulse/VelocityChange = EVENT (temporal: "event")
+  * AddForce with Force/Acceleration = CONTINUOUS (temporal: "continuous") in FixedUpdate
+  
+- Animator: 
+  * SetTrigger/Play = EVENT (temporal: "event")
+  * SetFloat/SetBool for blending = CONTINUOUS (temporal: "continuous")
+  
+- Transform: 
+  * position/rotation assignment with lerp = CONTINUOUS (temporal: "continuous")
+  * position/rotation direct assignment = EVENT (temporal: "event") if one-time, CONTINUOUS if every frame
+
+DEPENDENCY HANDLING (CRITICAL - prevents undefined references):
+- DO NOT reference external singleton classes (PlayerManager, GameManager, ScoreManager, etc.)
+- DO NOT assume static classes exist unless they're Unity built-ins
+- For player references, use: GameObject.FindGameObjectWithTag("Player")
+- Cache in Start():
+  ```csharp
+  private Transform _player;
+  void Start() {
+      GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
+      if (playerObj != null) {
+          _player = playerObj.transform;
+      }
+  }
+  ```
+- ALWAYS add null checks: if (_player == null) return;
+- For other game objects, use tags or FindGameObjectWithTag()
+- NEVER use: PlayerManager.instance, GameManager.Instance, etc. (these don't exist)
 
 STRUCTURE:
 1. using statements
 2. public class [EXACT_CLASS_NAME] : MonoBehaviour
 3. [SerializeField] private fields (EXACT names from IR)
 4. private component references (Rigidbody, Collider, etc.)
-5. Start() - GetComponent calls
-6. Update() - if needed for continuous checks
-7. Unity event methods (OnTriggerEnter, etc.) for trigger-based behaviors
-8. Behavior implementation methods
-9. Helper methods if needed
+5. State enum and state tracking fields (if state machine)
+6. Start() - GetComponent calls, initialization, cache player references
+7. Update() - State machine logic, continuous behaviors
+8. FixedUpdate() - Physics-based continuous behaviors (if needed)
+9. Unity event methods (OnTriggerEnter, etc.) for event-based behaviors
+10. EnterState() / UpdateState() / ExitState() / DetermineNextState() (if state machine)
+11. Behavior implementation methods
+12. Helper methods if needed
+
+GENERAL ALGORITHM:
+1. Parse IR behavior's trigger type:
+   - "collision", "trigger enter", "button press" → OnTrigger/OnCollision method
+   - "state is X" → State machine pattern
+   - "update", "each frame" → Update pattern with action classification
+   - "timer expires", "cooldown ready" → Cooldown pattern
+
+2. For each action in behavior, check its "temporal" field:
+   - "event" → Place in state entry/trigger callback/condition change
+   - "continuous" → Place in Update/FixedUpdate/state update
+   - "conditional" → Add condition check with state tracking
+
+3. Group actions by temporal type within each behavior
+
+4. Generate appropriate Unity lifecycle methods
+
+VALIDATION:
+Before generating code, verify:
+- No EVENT actions in continuous execution paths (Update loop) without protection
+- All CONTINUOUS actions have Time.deltaTime multiplier
+- All physics CONTINUOUS actions in FixedUpdate
+- State changes properly detected before EVENT actions
+- Cooldowns on repeatable EVENTs
 
 Output ONLY the C# code. No markdown, no explanations."""
 
@@ -650,7 +877,7 @@ class UnityPipelineRAG:
         return "\n".join(parts)
     
     def _build_structured_prompt(self, ir_json: Dict, rag_context: str) -> str:
-        """Build a structured prompt that emphasizes IR mapping."""
+        """Build a structured prompt that emphasizes IR mapping with temporal classification."""
         parts = []
         
         if rag_context:
@@ -685,33 +912,136 @@ class UnityPipelineRAG:
                 parts.append(f"  - {name} ({ftype}) = {default}")
             parts.append("")
         
-        # Behaviors
+        # State Machine (if present)
+        state_machine = ir_json.get("state_machine", {})
+        if isinstance(state_machine, dict) and state_machine.get("has_state_machine", False):
+            parts.append("STATE MACHINE (IMPLEMENT WITH ENUM AND SWITCH):")
+            initial_state = state_machine.get("initial_state", "")
+            states = state_machine.get("states", [])
+            
+            parts.append(f"  Initial State: {initial_state}")
+            parts.append("  States:")
+            for state in states:
+                state_name = state.get("name", "")
+                actions = state.get("actions", [])
+                state_transitions = state.get("transitions", [])
+                
+                # Group actions by temporal type
+                event_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "event"]
+                continuous_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "continuous"]
+                conditional_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "conditional"]
+                
+                parts.append(f"    - {state_name}:")
+                if event_actions:
+                    parts.append(f"        EVENT actions ({len(event_actions)}): Execute ONCE in EnterState()")
+                    for action in event_actions:
+                        action_text = action.get("action", str(action))
+                        parts.append(f"          • {action_text}")
+                if continuous_actions:
+                    parts.append(f"        CONTINUOUS actions ({len(continuous_actions)}): Execute EVERY FRAME in UpdateState()")
+                    for action in continuous_actions:
+                        action_text = action.get("action", str(action))
+                        parts.append(f"          • {action_text}")
+                if conditional_actions:
+                    parts.append(f"        CONDITIONAL actions ({len(conditional_actions)}): Check in UpdateState(), trigger events on change")
+                    for action in conditional_actions:
+                        action_text = action.get("action", str(action))
+                        parts.append(f"          • {action_text}")
+                
+                if state_transitions:
+                    parts.append(f"        Transitions:")
+                    for trans in state_transitions:
+                        to_state = trans.get("to", "")
+                        condition = trans.get("condition", "")
+                        parts.append(f"          → {to_state} (when {condition})")
+            
+            parts.append("")
+            parts.append("  IMPLEMENTATION REQUIREMENTS:")
+            parts.append("  - Create State enum with all state names")
+            parts.append("  - Track _currentState and _previousState")
+            parts.append("  - EnterState() → Execute EVENT actions (temporal: \"event\") ONCE")
+            parts.append("  - UpdateState() → Execute CONTINUOUS actions (temporal: \"continuous\") EVERY FRAME")
+            parts.append("  - DetermineNextState() → Check transition conditions")
+            parts.append("  - CRITICAL: Audio PlayOneShot() ONLY in EnterState(), NEVER in UpdateState()")
+            parts.append("")
+        
+        # Behaviors (simple behaviors, not state-based)
         behaviors = ir_json.get("behaviors", [])
         if behaviors:
-            parts.append("BEHAVIORS (implement each one):")
+            parts.append("BEHAVIORS (implement each one with correct execution timing):")
             for i, behavior in enumerate(behaviors, 1):
                 if isinstance(behavior, dict):
                     name = behavior.get("name", f"behavior_{i}")
                     trigger = behavior.get("trigger", "")
                     actions = behavior.get("actions", [])
+                    
+                    # Group actions by temporal type
+                    event_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "event"]
+                    continuous_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "continuous"]
+                    conditional_actions = [a for a in actions if isinstance(a, dict) and a.get("temporal") == "conditional"]
+                    legacy_actions = [a for a in actions if not isinstance(a, dict) or "temporal" not in a]
+                    
                     parts.append(f"  {i}. {name}")
                     parts.append(f"     Trigger: {trigger}")
-                    parts.append(f"     Actions:")
-                    for action in actions:
-                        if isinstance(action, dict):
+                    
+                    if event_actions:
+                        parts.append(f"     EVENT actions ({len(event_actions)} - execute ONCE):")
+                        for action in event_actions:
                             action_text = action.get("action", str(action))
-                        else:
-                            action_text = str(action)
-                        parts.append(f"       - {action_text}")
+                            parts.append(f"       - {action_text}")
+                        parts.append(f"     → IMPLEMENT IN: EnterState() or one-time event method (OnTriggerEnter, etc.)")
+                        parts.append(f"     → CRITICAL: Audio PlayOneShot() ONLY here, NEVER in Update()")
+                    
+                    if continuous_actions:
+                        parts.append(f"     CONTINUOUS actions ({len(continuous_actions)} - execute EVERY FRAME):")
+                        for action in continuous_actions:
+                            action_text = action.get("action", str(action))
+                            parts.append(f"       - {action_text}")
+                        parts.append(f"     → IMPLEMENT IN: Update() or FixedUpdate() with Time.deltaTime")
+                    
+                    if conditional_actions:
+                        parts.append(f"     CONDITIONAL actions ({len(conditional_actions)} - check then trigger):")
+                        for action in conditional_actions:
+                            action_text = action.get("action", str(action))
+                            parts.append(f"       - {action_text}")
+                        parts.append(f"     → IMPLEMENT IN: Update() with state tracking to prevent re-triggering")
+                    
+                    if legacy_actions:
+                        parts.append(f"     Actions (legacy format - no temporal specified):")
+                        for action in legacy_actions:
+                            if isinstance(action, dict):
+                                action_text = action.get("action", str(action))
+                            else:
+                                action_text = str(action)
+                            parts.append(f"       - {action_text}")
+                        parts.append(f"     → IMPLEMENT IN: Infer from action type (audio/spawn = event, movement = continuous)")
                 else:
                     parts.append(f"  {i}. {behavior}")
             parts.append("")
+        
+        # Dependency warnings
+        parts.append("=== DEPENDENCY HANDLING ===")
+        parts.append("DO NOT reference undefined classes:")
+        parts.append("  - NO PlayerManager.instance, GameManager.Instance, etc.")
+        parts.append("  - Use GameObject.FindGameObjectWithTag(\"Player\") for player references")
+        parts.append("  - Cache in Start() and add null checks")
+        parts.append("")
         
         # Full JSON for reference
         parts.append("=== FULL IR JSON (for reference) ===")
         parts.append(json.dumps(ir_json, indent=2))
         parts.append("")
         parts.append("Generate the complete Unity C# MonoBehaviour script following the specification above.")
+        parts.append("")
+        parts.append("CRITICAL REMINDERS:")
+        parts.append("- EVENT actions (temporal: \"event\") → Execute ONCE (EnterState() or one-time events)")
+        parts.append("- CONTINUOUS actions (temporal: \"continuous\") → Execute EVERY FRAME (Update() or FixedUpdate())")
+        parts.append("- CONDITIONAL actions (temporal: \"conditional\") → Check in Update(), trigger events on change")
+        parts.append("- Audio PlayOneShot() → ONLY in EnterState() or one-time events, NEVER in Update()")
+        parts.append("- State machines → Use enum, switch statements, EnterState/UpdateState pattern")
+        parts.append("- Dependencies → Use FindGameObjectWithTag(), never assume singletons exist")
+        parts.append("- All continuous actions MUST use Time.deltaTime for frame-rate independence")
+        parts.append("- Physics continuous forces MUST be in FixedUpdate()")
         
         return "\n".join(parts)
     
@@ -831,9 +1161,77 @@ class UnityPipelineRAG:
         if found_behaviors < len(behaviors) * 0.6:  # At least 60% should be found
             issues.append(f"Only {found_behaviors}/{len(behaviors)} behaviors detected")
         
+        # Check for duplicate variable declarations
+        duplicate_issues = self._check_duplicate_declarations(code)
+        issues.extend(duplicate_issues)
+        
         if issues:
             return "; ".join(issues)
         return None
+    
+    def _check_duplicate_declarations(self, code: str) -> List[str]:
+        """
+        Check for duplicate variable declarations in C# code.
+        Returns list of issue messages.
+        """
+        issues = []
+        lines = code.split('\n')
+        
+        # Track field declarations (class-level variables)
+        field_declarations = {}  # var_name -> list of line_nums
+        
+        # Track method parameters
+        method_params = {}  # method_name -> list of param_names
+        
+        for line_num, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # Skip comments
+            if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
+                continue
+            
+            # Check for field declarations (class-level)
+            # Pattern: [attributes] access_modifier type var_name [= value];
+            field_patterns = [
+                r'\[(?:SerializeField|Header)[^\]]*\]\s*(?:private|public|protected|internal)?\s+\w+\s+(\w+)\s*[=;]',
+                r'(?:private|public|protected|internal)\s+\w+\s+(\w+)\s*[=;]',
+            ]
+            
+            for pattern in field_patterns:
+                matches = re.finditer(pattern, line)
+                for match in matches:
+                    var_name = match.group(1)
+                    if var_name not in field_declarations:
+                        field_declarations[var_name] = []
+                    field_declarations[var_name].append(line_num)
+            
+            # Check for method parameters (simplified - just check for duplicate params in same signature)
+            method_match = re.search(r'\b(?:private|public|protected|internal)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(([^)]*)\)', line)
+            if method_match:
+                method_name = method_match.group(1)
+                params_str = method_match.group(2)
+                # Extract parameter names
+                param_names = []
+                for param in params_str.split(','):
+                    param = param.strip()
+                    if param:
+                        # Extract name (last word before = or end)
+                        param_match = re.search(r'(\w+)(?:\s*=\s*[^,]+)?$', param)
+                        if param_match:
+                            param_names.append(param_match.group(1))
+                # Check for duplicate parameter names in same method
+                seen_params = set()
+                for param_name in param_names:
+                    if param_name in seen_params:
+                        issues.append(f"Line {line_num}: Duplicate parameter '{param_name}' in method '{method_name}'")
+                    seen_params.add(param_name)
+        
+        # Check for duplicate field declarations
+        for var_name, line_nums in field_declarations.items():
+            if len(line_nums) > 1:
+                issues.append(f"Duplicate field declaration '{var_name}' at lines {', '.join(map(str, line_nums))}")
+        
+        return issues
     
     def _retrieve_per_behavior(self, ir_json: Dict) -> Tuple[str, int]:
         """

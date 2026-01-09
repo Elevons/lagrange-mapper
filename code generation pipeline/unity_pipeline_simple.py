@@ -12,6 +12,7 @@ No attractor detection, no calibration, just clean generation with RAG support.
 """
 
 import json
+import re
 import requests
 import sys
 from typing import Dict, List, Optional
@@ -944,9 +945,77 @@ JSON:"""
         if found_behaviors < len(behaviors) * 0.6:  # At least 60% should be found
             issues.append(f"Only {found_behaviors}/{len(behaviors)} behaviors detected")
         
+        # Check for duplicate variable declarations
+        duplicate_issues = self._check_duplicate_declarations(code)
+        issues.extend(duplicate_issues)
+        
         if issues:
             return "; ".join(issues)
         return None
+    
+    def _check_duplicate_declarations(self, code: str) -> List[str]:
+        """
+        Check for duplicate variable declarations in C# code.
+        Returns list of issue messages.
+        """
+        issues = []
+        lines = code.split('\n')
+        
+        # Track field declarations (class-level variables)
+        field_declarations = {}  # var_name -> list of line_nums
+        
+        # Track method parameters
+        method_params = {}  # method_name -> list of param_names
+        
+        for line_num, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # Skip comments
+            if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
+                continue
+            
+            # Check for field declarations (class-level)
+            # Pattern: [attributes] access_modifier type var_name [= value];
+            field_patterns = [
+                r'\[(?:SerializeField|Header)[^\]]*\]\s*(?:private|public|protected|internal)?\s+\w+\s+(\w+)\s*[=;]',
+                r'(?:private|public|protected|internal)\s+\w+\s+(\w+)\s*[=;]',
+            ]
+            
+            for pattern in field_patterns:
+                matches = re.finditer(pattern, line)
+                for match in matches:
+                    var_name = match.group(1)
+                    if var_name not in field_declarations:
+                        field_declarations[var_name] = []
+                    field_declarations[var_name].append(line_num)
+            
+            # Check for method parameters (simplified - just check for duplicate params in same signature)
+            method_match = re.search(r'\b(?:private|public|protected|internal)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(([^)]*)\)', line)
+            if method_match:
+                method_name = method_match.group(1)
+                params_str = method_match.group(2)
+                # Extract parameter names
+                param_names = []
+                for param in params_str.split(','):
+                    param = param.strip()
+                    if param:
+                        # Extract name (last word before = or end)
+                        param_match = re.search(r'(\w+)(?:\s*=\s*[^,]+)?$', param)
+                        if param_match:
+                            param_names.append(param_match.group(1))
+                # Check for duplicate parameter names in same method
+                seen_params = set()
+                for param_name in param_names:
+                    if param_name in seen_params:
+                        issues.append(f"Line {line_num}: Duplicate parameter '{param_name}' in method '{method_name}'")
+                    seen_params.add(param_name)
+        
+        # Check for duplicate field declarations
+        for var_name, line_nums in field_declarations.items():
+            if len(line_nums) > 1:
+                issues.append(f"Duplicate field declaration '{var_name}' at lines {', '.join(map(str, line_nums))}")
+        
+        return issues
     
     def _steer_code(self, code: str, ir_json: Dict, rag_context: str, suspicious: list = None) -> Optional[str]:
         """Apply RAG-based steering to fix code issues"""

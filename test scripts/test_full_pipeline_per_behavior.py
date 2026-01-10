@@ -9,6 +9,7 @@ Usage:
     # Test single prompt
     python test_full_pipeline_per_behavior.py "disco ball with lights"
     
+    # Test with verbose output
     python test_full_pipeline_per_behavior.py "particle fountain" --verbose
     
     # Test multiple prompts from file
@@ -123,37 +124,54 @@ GENERATED CODE:
 {code[:4000] if code else "[FAILED TO GENERATE]"}
 ```
 
-Evaluate this code on the following criteria:
+Evaluate this code on the following criteria (COMPILATION IS CRITICAL):
 
-1. **Correctness** (0-10): Does the code correctly implement the user's request?
+1. **Compilation Correctness** (0-10, HIGHEST PRIORITY): Will this code compile without errors?
+   - Check for syntax errors (missing semicolons, brackets, etc.)
+   - Check for type mismatches and undefined variables
+   - Check for missing using statements
+   - Check for invalid Unity API calls
+   - Check for duplicate variable/method declarations
+   - Check for missing return statements
+   - If code has compilation errors, this score should be LOW (0-3)
+   - If code compiles but has warnings, score should be MODERATE (4-7)
+   - If code compiles cleanly, score should be HIGH (8-10)
+
+2. **Correctness** (0-10): Does the code correctly implement the user's request?
    - Does it match the IR specification?
    - Are the behaviors implemented correctly?
    - Are the Unity APIs used correctly?
 
-2. **Code Quality** (0-10): Is the code well-structured and maintainable?
+3. **Code Quality** (0-10): Is the code well-structured and maintainable?
    - Proper Unity lifecycle methods?
    - Good variable naming?
    - Appropriate use of components?
    - TODO comments for complex sections?
 
-3. **Completeness** (0-10): Does the code implement all required features?
+4. **Completeness** (0-10): Does the code implement all required features?
    - All behaviors from IR?
    - All fields and components?
    - Edge cases handled (or marked with TODOs)?
 
-4. **Unity Best Practices** (0-10): Does it follow Unity conventions?
+5. **Unity Best Practices** (0-10): Does it follow Unity conventions?
    - Proper component usage?
    - Correct physics handling?
    - Appropriate use of SerializeField?
    - Safe null checks?
 
+IMPORTANT: The overall_score should be heavily weighted by compilation_correctness. 
+If compilation_correctness is below 5, the overall_score should be penalized significantly.
+A script that doesn't compile is fundamentally broken, regardless of other qualities.
+
 Return a JSON object with:
 {{
-  "overall_score": <0-10 average of all scores>,
+  "overall_score": <0-10 weighted average (compilation_correctness has 3x weight)>,
+  "compilation_correctness": <0-10>,
   "correctness": <0-10>,
   "code_quality": <0-10>,
   "completeness": <0-10>,
   "unity_best_practices": <0-10>,
+  "compilation_issues": ["issue1", "issue2", ...],
   "strengths": ["strength1", "strength2", ...],
   "weaknesses": ["weakness1", "weakness2", ...],
   "suggestions": ["suggestion1", "suggestion2", ...]
@@ -286,6 +304,10 @@ class FullPipelineTester:
                 if self.verbose:
                     score = result.grade.get('overall_score', 0)
                     print(f"  Grade: {score}/10")
+                    comp_score = result.grade.get('compilation_correctness', 0)
+                    print(f"  Compilation: {comp_score}/10 (CRITICAL)")
+                    if result.grade.get('compilation_issues'):
+                        print(f"    Issues: {', '.join(result.grade.get('compilation_issues', [])[:3])}")
                     print(f"  Correctness: {result.grade.get('correctness', 0)}/10")
                     print(f"  Code Quality: {result.grade.get('code_quality', 0)}/10")
                     print(f"  Completeness: {result.grade.get('completeness', 0)}/10")
@@ -340,8 +362,19 @@ class FullPipelineTester:
         
         if graded > 0:
             scores = [r.grade.get('overall_score', 0) for r in results if r.success and r.grade]
+            comp_scores = [r.grade.get('compilation_correctness', 0) for r in results if r.success and r.grade if r.grade.get('compilation_correctness') is not None]
+            
             avg_score = sum(scores) / len(scores)
             print(f"Average grade: {avg_score:.1f}/10")
+            
+            if comp_scores:
+                avg_comp = sum(comp_scores) / len(comp_scores)
+                print(f"Average compilation score: {avg_comp:.1f}/10")
+                
+                # Compilation issues count
+                comp_issues = sum(1 for r in results if r.success and r.grade and r.grade.get('compilation_correctness', 10) < 5)
+                if comp_issues > 0:
+                    print(f"⚠️  {comp_issues} scripts with compilation issues (score < 5)")
             
             # Score distribution
             excellent = sum(1 for s in scores if s >= 8)
@@ -349,7 +382,7 @@ class FullPipelineTester:
             fair = sum(1 for s in scores if 4 <= s < 6)
             poor = sum(1 for s in scores if s < 4)
             
-            print(f"\nScore distribution:")
+            print(f"\nOverall score distribution:")
             print(f"  Excellent (8-10): {excellent}")
             print(f"  Good (6-8): {good}")
             print(f"  Fair (4-6): {fair}")

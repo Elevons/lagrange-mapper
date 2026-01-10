@@ -82,7 +82,7 @@ MODEL_NAME = "local-model-unity-ir"
 
 # Defaults
 DEFAULT_INTENSITY = 0.5
-MAX_REGENERATION_ATTEMPTS = 3
+MAX_REGENERATION_ATTEMPTS = 2
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 4096  # Increased to allow for longer responses
 

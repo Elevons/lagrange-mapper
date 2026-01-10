@@ -1,0 +1,14 @@
+[
+  {
+    "prompt": "disco ball that rotates and projects colored light beams with particle effects",
+    "success": false,
+    "generation_time": 22.902188539505005,
+    "rag_docs_used": 0,
+    "was_steered": false,
+    "generated_code": null,
+    "ir_json": null,
+    "grade": null,
+    "grade_time": 0.0,
+    "error": "Generation failed: IR generation failed: LLM call failed"
+  }
+]

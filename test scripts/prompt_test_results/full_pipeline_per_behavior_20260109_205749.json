@@ -1,0 +1,874 @@
+[
+  {
+    "prompt": "1. \"Create a script that makes an object spin faster and faster while playing a sound that gets louder, and when it reaches maximum speed it explodes into 10 smaller pieces that each bounce around randomly while playing their own unique sound effects, and the original object's material color shifts from blue to red during the spin-up phase.\"",
+    "success": true,
+    "generation_time": 135.45028066635132,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.5,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 9,
+      "strengths": [
+        "Comprehensive state machine implementation",
+        "Smooth color interpolation between blue and red",
+        "Proper volume and speed scaling",
+        "Correct use of Unity component retrieval",
+        "Well-structured state transition logic"
+      ],
+      "weaknesses": [
+        "No physics-based explosion for spawned pieces",
+        "No randomization of spawned piece trajectories",
+        "Potential performance overhead with state machine approach",
+        "Limited error handling for missing components"
+      ],
+      "suggestions": [
+        "Add random force application to spawned pieces using Rigidbody.AddExplosionForce()",
+        "Implement individual sound effects for spawned pieces",
+        "Add more robust null checking and component validation",
+        "Consider using Unity's built-in event system for state transitions",
+        "Add configurable parameters for explosion randomness"
+      ]
+    },
+    "grade_time": 12.11962103843689,
+    "error": null
+  },
+  {
+    "prompt": "2. \"Make a gravity well that pulls nearby rigidbodies toward it with increasing force based on distance, plays a low-frequency rumble that gets louder as objects get closer, changes the light intensity based on how many objects are currently being pulled, and creates particle effects at the point where objects collide with the center, all while rotating the entire gravity well slowly.\"",
+    "success": true,
+    "generation_time": 149.8915114402771,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of gravity well mechanics",
+        "Correct use of Unity component retrieval",
+        "Dynamic audio and light intensity based on nearby objects",
+        "Proper use of SerializeField for inspector-configurable parameters"
+      ],
+      "weaknesses": [
+        "Incomplete collision particle effect handling",
+        "Simplified inverse square distance calculation",
+        "Potential performance issues with frequent Physics.OverlapSphere",
+        "Missing error handling for missing components"
+      ],
+      "suggestions": [
+        "Implement OnCollisionEnter to trigger collision particles",
+        "Use more precise inverse square distance calculation",
+        "Consider using Physics.OverlapSphereNonAlloc for better performance",
+        "Add null checks for required components in Start()",
+        "Create a separate method for force application to improve readability"
+      ]
+    },
+    "grade_time": 12.357292652130127,
+    "error": null
+  },
+  {
+    "prompt": "3. \"Build a script that turns any object into a musical instrument - when you collide with it, it plays a note based on where you hit it (top plays high notes, bottom plays low notes), the object's color shifts to match the note's frequency, it vibrates with the sound, and leaves a trail of particles that fade out over 2 seconds.\"",
+    "success": true,
+    "generation_time": 151.25294280052185,
+    "rag_docs_used": 12,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of collision handling",
+        "Proper use of Unity component retrieval",
+        "Implemented particle system fade-out logic",
+        "Added TODO comments for complex sections",
+        "Proper event-driven architecture"
+      ],
+      "weaknesses": [
+        "Incomplete frequency-based color shifting",
+        "Placeholder note mapping logic",
+        "Limited audio clip assignment mechanism",
+        "No clear strategy for defining note map"
+      ],
+      "suggestions": [
+        "Implement a more sophisticated frequency-to-color mapping algorithm",
+        "Create a method to programmatically populate the noteMap dictionary",
+        "Add configuration options for vibration and particle trail characteristics",
+        "Implement a more precise hit position to note mapping strategy",
+        "Consider adding configuration options in the Unity Inspector",
+        "Add error handling for missing components"
+      ]
+    },
+    "grade_time": 11.551090478897095,
+    "error": null
+  },
+  {
+    "prompt": "4. \"Create a creature that has 5 states: idle (sits still, plays ambient breathing), curious (slowly approaches player if within 10 units, plays questioning sound), scared (runs away from player, plays panic sound, color turns red), aggressive (chases player, plays roar, color turns dark, applies force toward player), and exhausted (stops moving, plays tired sound, color fades to gray). It transitions between states based on player distance and how long it's been in current state.\"",
+    "success": true,
+    "generation_time": 313.5690453052521,
+    "rag_docs_used": 0,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Well-structured state machine implementation",
+        "Comprehensive state transitions",
+        "Proper use of Unity components",
+        "Careful handling of player detection",
+        "Clear and readable state management"
+      ],
+      "weaknesses": [
+        "Incomplete implementation (code appears to be cut off)",
+        "Missing implementation of movement methods",
+        "No explicit color change method implemented",
+        "Lacks complete error handling",
+        "No force application method fully implemented"
+      ],
+      "suggestions": [
+        "Complete the implementation of helper methods like MoveTowardPlayer(), MoveAwayFromPlayer(), ChangeColor(), and ApplyForceTowardPlayer()",
+        "Add null checks for audio clips and other references",
+        "Implement a more robust state transition method in DetermineNextState()",
+        "Add logging or debug statements for state transitions",
+        "Complete the code by adding the missing methods and finishing the state machine implementation",
+        "Consider using a more sophisticated approach to continuous audio playback in the idle state"
+      ]
+    },
+    "grade_time": 12.92717432975769,
+    "error": null
+  },
+  {
+    "prompt": "5. \"Make a door that has locked, unlocking, open, and closing states. When locked, it plays a rattle sound and shakes slightly. When unlocking, it plays a key-turning sound for 3 seconds while rotating slowly, then transitions to open. When open, it plays a creak and stays open for 10 seconds, then automatically starts closing. During closing, it rotates back while playing a slam sound, then locks again. The door's material emission color changes with each state.\"",
+    "success": true,
+    "generation_time": 211.37510466575623,
+    "rag_docs_used": 0,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Well-structured state machine implementation",
+        "Comprehensive serialized fields matching IR specification",
+        "Proper use of Unity component retrieval",
+        "Detailed state transitions and enter/update state methods"
+      ],
+      "weaknesses": [
+        "Incomplete implementation (code snippet is cut off)",
+        "Missing explicit state transition conditions",
+        "No explicit method for handling unlock command",
+        "Lack of error handling for missing components"
+      ],
+      "suggestions": [
+        "Complete the DetermineNextState() method to handle state transitions",
+        "Add an explicit Unlock() method to trigger state change",
+        "Implement more robust error handling for missing audio clips",
+        "Add comments explaining the state machine logic",
+        "Consider using a more robust state machine pattern or framework"
+      ]
+    },
+    "grade_time": 11.453434944152832,
+    "error": null
+  },
+  {
+    "prompt": "6. \"Create a bouncy ball that, every time it hits a surface, bounces higher than the previous bounce, plays a pitch that increases with each bounce, changes color based on bounce count, and leaves a temporary trail. After 10 bounces, it explodes into confetti particles while playing a celebration sound.\"",
+    "success": true,
+    "generation_time": 177.81707382202148,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Well-structured state machine implementation",
+        "Comprehensive bounce event handling",
+        "Proper use of Unity component references",
+        "Thoughtful separation of state entry, update, and exit logic"
+      ],
+      "weaknesses": [
+        "Incomplete color change implementation (code cut off)",
+        "Missing bounce force application logic",
+        "No explicit velocity or force calculation on bounce",
+        "Potential performance overhead with state machine complexity"
+      ],
+      "suggestions": [
+        "Complete the ChangeColorBasedOnBounceCount() method",
+        "Implement explicit force application in SetBounceForce()",
+        "Add null checks for all prefabs and audio clips",
+        "Consider using more efficient state transition mechanism",
+        "Add error logging for missing components or references"
+      ]
+    },
+    "grade_time": 12.300673961639404,
+    "error": null
+  },
+  {
+    "prompt": "7. \"Make an object that floats upward when you're near it (within 5 units), but falls faster when you're far away. It plays a humming sound that gets higher pitched as it rises, and lower pitched as it falls. The object also rotates opposite to its vertical movement direction, and its scale pulses in sync with the audio frequency.\"",
+    "success": true,
+    "generation_time": 122.34188294410706,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of most requested features",
+        "Good use of Unity components (Rigidbody, AudioSource)",
+        "Careful handling of player distance and vertical movement",
+        "Appropriate use of SerializeField for inspector configurability",
+        "Modular method design with clear responsibilities"
+      ],
+      "weaknesses": [
+        "Simplistic scale pulsing implementation",
+        "Pitch adjustment could be more sophisticated",
+        "No explicit handling of audio looping",
+        "Limited error handling for missing components",
+        "Rough approximation of audio frequency synchronization"
+      ],
+      "suggestions": [
+        "Use AudioSource.loop = true for continuous humming",
+        "Implement more robust audio frequency analysis for scale pulsing",
+        "Add null checks and component validation in Awake() method",
+        "Consider using AudioSource.GetSpectrumData() for more accurate frequency synchronization",
+        "Implement smoother velocity transitions using SmoothDamp",
+        "Add input validation for nearDistance and speed parameters"
+      ]
+    },
+    "grade_time": 11.814818859100342,
+    "error": null
+  },
+  {
+    "prompt": "8. \"Build a physics-based pendulum that swings naturally, but when it reaches the bottom of its swing, it applies an explosive force to any rigidbody it touches, plays a bell sound, and creates a shockwave particle effect. The pendulum's rope length can be adjusted, and the swing speed affects the volume of the bell sound.\"",
+    "success": true,
+    "generation_time": 133.96211457252502,
+    "rag_docs_used": 14,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of pendulum mechanics",
+        "Handles explosive force and sound/particle effects",
+        "Uses SerializeField for inspector configurability",
+        "Robust null checking",
+        "Uses OverlapSphere for detecting nearby rigidbodies"
+      ],
+      "weaknesses": [
+        "No explicit handling of rope length adjustment",
+        "HingeJoint axis setting is incomplete",
+        "Simplified angular drag implementation",
+        "Potential performance concerns with Physics.OverlapSphere"
+      ],
+      "suggestions": [
+        "Add a method to dynamically adjust rope length at runtime",
+        "Implement more precise HingeJoint configuration",
+        "Consider object pooling for particle effects and sound",
+        "Add more granular control over explosion parameters",
+        "Implement configurable explosion radius separate from rope length"
+      ]
+    },
+    "grade_time": 11.522354364395142,
+    "error": null
+  },
+  {
+    "prompt": "9. \"Create a time bomb that beeps every second, with the beep frequency increasing as time runs down. The object's color pulses red in sync with beeps, and it shakes more violently as time decreases. After 10 seconds, it explodes with a massive force affecting all rigidbodies in a 20-unit radius, plays an explosion sound, and spawns fire particles that last 5 seconds.\"",
+    "success": true,
+    "generation_time": 124.26525473594666,
+    "rag_docs_used": 11,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.5,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 9,
+      "strengths": [
+        "Comprehensive implementation of time bomb mechanics",
+        "Detailed countdown and explosion logic",
+        "Good use of Unity component retrieval",
+        "Proper explosion force and radius implementation",
+        "Visual debugging with OnDrawGizmosSelected"
+      ],
+      "weaknesses": [
+        "Missing explicit audio clip for beeping",
+        "Hardcoded shake and pulse parameters",
+        "No configurable beep sound",
+        "Limited error handling for missing prefabs"
+      ],
+      "suggestions": [
+        "Add a separate beep sound audio clip",
+        "Make shake and color pulse intensity configurable",
+        "Add more robust error handling for missing components or prefabs",
+        "Consider using a coroutine for more precise timing",
+        "Add optional parameters for explosion customization"
+      ]
+    },
+    "grade_time": 11.507219552993774,
+    "error": null
+  },
+  {
+    "prompt": "10. \"Make a script that gradually transforms an object over 30 seconds: it smoothly rotates 360 degrees, scales from 1x to 2x and back, changes color through the rainbow spectrum, moves in a figure-8 pattern, and plays a continuous musical note that shifts pitch based on the current transformation phase. All transformations must be perfectly synchronized.\"",
+    "success": true,
+    "generation_time": 106.73101997375488,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.25,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of all requested transformations",
+        "Synchronization of multiple effects using single time reference",
+        "Use of Mathf utility functions for smooth interpolation",
+        "Proper use of Unity component retrieval",
+        "Systematic breakdown of complex transformations into methods"
+      ],
+      "weaknesses": [
+        "Figure-8 movement modifies position incrementally, which might cause drift",
+        "No reset mechanism for object after transformation completes",
+        "Potential performance overhead from multiple simultaneous transformations",
+        "AudioSource dependency not explicitly required in inspector"
+      ],
+      "suggestions": [
+        "Implement absolute positioning for figure-8 movement instead of incremental",
+        "Add optional reset/initial state restoration after transformation",
+        "Consider using Coroutine for more precise timing control",
+        "Add null checks for MeshRenderer to prevent potential NullReferenceException",
+        "Allow configuration of transformation parameters via inspector",
+        "Implement optional interpolation modes (linear, ease-in-out, etc.)"
+      ]
+    },
+    "grade_time": 11.74687933921814,
+    "error": null
+  },
+  {
+    "prompt": "11. \"Create a visualizer that reacts to audio: when a sound plays, the object's scale increases proportionally to the audio volume, its color shifts based on the audio frequency (low = red, mid = green, high = blue), it rotates based on the audio waveform, and spawns particles that move outward in sync with the beat. The object should analyze the AudioSource's spectrum data in real-time.\"",
+    "success": true,
+    "generation_time": 104.41572499275208,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive implementation of audio visualization concept",
+        "Good use of Unity component retrieval",
+        "Clear separation of concerns in methods",
+        "Appropriate use of SerializeField attributes",
+        "Implemented play/stop lifecycle management"
+      ],
+      "weaknesses": [
+        "Placeholder implementations for complex audio analysis methods",
+        "Lack of precise beat detection",
+        "Simplified spectrum data and volume calculation",
+        "No advanced frequency-based color mapping"
+      ],
+      "suggestions": [
+        "Implement more sophisticated audio spectrum analysis using AudioSource.GetSpectrumData()",
+        "Add more precise beat detection using amplitude thresholds",
+        "Create more accurate frequency-to-color mapping",
+        "Consider using DSP (Digital Signal Processing) techniques for more accurate audio visualization",
+        "Add error handling for missing components",
+        "Implement more advanced particle spawning logic tied to audio beats"
+      ]
+    },
+    "grade_time": 11.373652935028076,
+    "error": null
+  },
+  {
+    "prompt": "12. \"Make a singing crystal that, when touched, plays a sequence of 5 musical notes in a chord progression. Each note lights up a different part of the crystal (top, middle, bottom, left, right), and the entire crystal pulses with the rhythm. After the sequence completes, it plays a final harmonious note and creates a burst of light particles.\"",
+    "success": true,
+    "generation_time": 146.83374428749084,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.25,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 6,
+      "unity_best_practices": 7,
+      "strengths": [
+        "Well-implemented state machine pattern",
+        "Proper use of SerializeField for configurable components",
+        "Comprehensive state transition logic",
+        "Handles basic touch and interaction mechanics"
+      ],
+      "weaknesses": [
+        "Incomplete implementation of note sequence and light effects",
+        "Partial method implementations with TODOs",
+        "Missing detailed light and rhythm synchronization",
+        "Unfinished CreateLightParticleBurst method"
+      ],
+      "suggestions": [
+        "Complete the CreateLightParticleBurst method with precise particle instantiation",
+        "Implement more precise timing for note sequence and light effects",
+        "Add more detailed rhythm synchronization in PulseCrystalWithRhythm method",
+        "Implement sequential lighting of different crystal parts",
+        "Add error handling for missing audio/visual components",
+        "Consider using coroutines for more precise sequential actions"
+      ]
+    },
+    "grade_time": 11.893747568130493,
+    "error": null
+  },
+  {
+    "prompt": "13. \"Build a pressure plate system: when weight is applied (detected via collision), it plays a click sound, changes color to green, and starts a 5-second timer. If weight is removed before 5 seconds, it resets. If weight stays for 5 seconds, it plays a success sound, spawns a reward object, and triggers all nearby pressure plates to also activate. Each pressure plate remembers how many times it's been activated.\"",
+    "success": true,
+    "generation_time": 175.8172571659088,
+    "rag_docs_used": 15,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Well-implemented state machine design",
+        "Comprehensive state transition logic",
+        "Proper serialized field usage",
+        "Safe null checks for components",
+        "Detailed state management with EnterState/ExitState methods"
+      ],
+      "weaknesses": [
+        "Incomplete code (cut off at OnCollisionEnt)",
+        "No implementation of TriggerNearbyPressurePlates() method",
+        "No error handling for missing AudioSource or Collider",
+        "Layer-based weight detection might be too rigid",
+        "No clear mechanism for resetting timer on weight removal"
+      ],
+      "suggestions": [
+        "Complete the OnCollisionEnter/Exit methods",
+        "Implement TriggerNearbyPressurePlates() method",
+        "Add more robust error handling and logging",
+        "Consider using Physics.OverlapSphere for nearby plate detection",
+        "Add optional debug logging for state transitions",
+        "Implement a more flexible weight detection mechanism"
+      ]
+    },
+    "grade_time": 11.607776403427124,
+    "error": null
+  },
+  {
+    "prompt": "14. \"Create a combo system: hitting an object once makes it glow yellow and play a low note. Hitting it again within 2 seconds makes it glow orange and play a higher note. A third hit within 2 seconds makes it glow red and play an even higher note. A fourth hit within 2 seconds creates an explosion effect, plays a victory sound, and spawns 5 bonus objects. Missing the 2-second window resets the combo.\"",
+    "success": true,
+    "generation_time": 144.00030064582825,
+    "rag_docs_used": 17,
+    "was_steered": true,
+    "grade": null,
+    "grade_time": 13.711528301239014,
+    "error": null
+  },
+  {
+    "prompt": "15. \"Make a portal that, when you enter it, plays a whoosh sound, rotates you 180 degrees instantly, reverses your velocity, changes your color to a random hue, scales you to 0.5x size, and teleports you to a random location within 50 units, all while creating a visual distortion effect at both the entry and exit points.\"",
+    "success": true,
+    "generation_time": 104.39914727210999,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.5,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 9,
+      "strengths": [
+        "Comprehensive implementation of all specified behaviors",
+        "Robust player detection and caching",
+        "Safe null checks for components",
+        "Correct use of Unity lifecycle methods",
+        "Flexible teleportation implementation"
+      ],
+      "weaknesses": [
+        "Incomplete distortion effect implementation (TODO comment)",
+        "Hardcoded player tag assumption",
+        "No error handling for missing exit portal"
+      ],
+      "suggestions": [
+        "Implement the CreateDistortionEffect method with a proper VFX or particle system",
+        "Add error logging or alternative behavior if exit portal is null",
+        "Consider making player tag configurable",
+        "Add optional configuration for randomization parameters",
+        "Implement a way to reset player scale after teleportation if needed"
+      ]
+    },
+    "grade_time": 11.465049743652344,
+    "error": null
+  },
+  {
+    "prompt": "16. \"Create a mimic chest: it looks like a normal chest until you get within 3 units, then it opens its lid (rotates 90 degrees), plays a creak sound, and reveals glowing eyes. If you touch it, it snaps shut (plays slam sound), applies a strong force pushing you away, changes to a dark material, and spawns 3 smaller mimic objects that chase you while playing menacing sounds.\"",
+    "success": true,
+    "generation_time": 189.1762249469757,
+    "rag_docs_used": 12,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 6.5,
+      "correctness": 7,
+      "code_quality": 6,
+      "completeness": 5,
+      "unity_best_practices": 7,
+      "strengths": [
+        "Well-structured state machine implementation",
+        "Proper use of SerializeField for inspector-configurable variables",
+        "Comprehensive state transition logic",
+        "Separation of concerns between state methods"
+      ],
+      "weaknesses": [
+        "Incomplete implementation (code snippet is cut off)",
+        "Missing implementation of key methods like ApplyForceToPlayer()",
+        "No error handling for missing components",
+        "Lack of comments explaining complex logic"
+      ],
+      "suggestions": [
+        "Complete the DetermineNextState() and other missing methods",
+        "Add null checks and error handling for all critical components",
+        "Implement the ApplyForceToPlayer(), ChangeMaterial(), and SpawnMimicObjects() methods",
+        "Add logging or debug statements for state transitions",
+        "Create a more robust method for finding the player",
+        "Add comments explaining the state machine logic"
+      ]
+    },
+    "grade_time": 14.433167934417725,
+    "error": null
+  },
+  {
+    "prompt": "17. \"Build a weather controller: when activated, it spawns rain particles that fall downward, plays rain sound effects, makes all objects in the scene slightly dampen (reduce bounce), changes ambient lighting to be darker, and after 10 seconds of rain, spawns lightning bolts (bright flashes) that play thunder sounds and briefly illuminate everything.\"",
+    "success": true,
+    "generation_time": 193.83250641822815,
+    "rag_docs_used": 15,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.25,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 6,
+      "unity_best_practices": 7,
+      "strengths": [
+        "Well-implemented state machine design",
+        "Clear separation of state transitions and actions",
+        "Use of SerializeField for inspector-configurable parameters",
+        "Comprehensive state management with Enter/Update/Exit state methods"
+      ],
+      "weaknesses": [
+        "Incomplete implementation of rain particle spawning",
+        "Missing actual activation mechanism",
+        "Incomplete lightning/thunder implementation",
+        "Hardcoded key input for state transition",
+        "Unfinished RainContinuous method"
+      ],
+      "suggestions": [
+        "Complete the RainContinuous method for continuous particle spawning",
+        "Implement a more robust activation mechanism (e.g., event-based)",
+        "Add proper lightning and thunder visual/audio effects",
+        "Implement safe object dampening with physics considerations",
+        "Add error handling for missing prefabs/components",
+        "Use object pooling for rain particles to improve performance"
+      ]
+    },
+    "grade_time": 12.805092811584473,
+    "error": null
+  },
+  {
+    "prompt": "18. \"Create a gravity field that inverts gravity for all objects within its radius, plays a space-warp sound, creates a visual distortion shader effect, and gradually rotates the entire affected area. Objects that enter the field should smoothly transition their gravity direction over 1 second, and when they exit, they should transition back to normal gravity over 1 second.\"",
+    "success": true,
+    "generation_time": 114.58190274238586,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Smooth gravity transition implementation",
+        "Event-based gravity inversion",
+        "Proper use of SerializeField attributes",
+        "Captures original material for restoration",
+        "Uses OnTriggerEnter/Exit for field detection"
+      ],
+      "weaknesses": [
+        "Global Physics.gravity modification affects entire scene",
+        "No per-object gravity inversion",
+        "Limited error handling for missing components",
+        "Rotation method has a typo (rotate vs Rotate)",
+        "No clear mechanism to limit gravity inversion to field radius"
+      ],
+      "suggestions": [
+        "Implement per-object gravity inversion using Rigidbody",
+        "Add range validation for serialized fields",
+        "Create a more robust gravity manipulation system",
+        "Add logging or debug warnings for missing components",
+        "Consider using a custom gravity field instead of modifying global gravity",
+        "Fix rotation method to use transform.Rotate()",
+        "Add configuration for gravity inversion strength"
+      ]
+    },
+    "grade_time": 12.504956245422363,
+    "error": null
+  },
+  {
+    "prompt": "19. \"Make a script that watches itself: it counts how many times its Update method has been called, and every 1000 calls, it plays a different sound, changes its own material, and spawns a clone of itself. The clone also has this same behavior, but starts its counter at 0. Each generation of clones plays a slightly higher-pitched sound than its parent.\"",
+    "success": true,
+    "generation_time": 67.18523740768433,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": null,
+    "grade_time": 15.677476167678833,
+    "error": null
+  },
+  {
+    "prompt": "20. \"Create a self-modifying object: it starts with basic properties, but every time it collides with something, it increases its own mass by 10%, plays a growth sound, scales up by 5%, and adds a new random color tint to its material. After 10 collisions, it splits into two identical objects, each with half the accumulated properties, and both continue the same behavior.\"",
+    "success": true,
+    "generation_time": 125.40547060966492,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.5,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 7,
+      "unity_best_practices": 8,
+      "strengths": [
+        "Comprehensive collision handling",
+        "Proper component retrieval in Start()",
+        "Random color tint generation",
+        "Mass and scale modification logic",
+        "Safe null checks for components"
+      ],
+      "weaknesses": [
+        "No actual object splitting implemented",
+        "Incomplete max collisions handling",
+        "Debug.Error() is not a valid Unity method",
+        "Missing implementation for object duplication"
+      ],
+      "suggestions": [
+        "Implement actual object splitting when max collisions are reached",
+        "Replace Debug.Error() with Debug.LogError()",
+        "Add error handling for material creation",
+        "Create a method to instantiate new objects with half properties",
+        "Consider using a more robust collision detection mechanism",
+        "Add configuration options for growth parameters"
+      ]
+    },
+    "grade_time": 12.501439809799194,
+    "error": null
+  },
+  {
+    "prompt": "21. \"Build a script that only works during specific conditions: it checks if the current time of day (using System.DateTime) is between 2 AM and 4 AM. If true, it makes the object glow, play spooky sounds, and move erratically. If false, it does nothing. The object should also check if there are exactly 7 other objects with Rigidbody components in the scene, and only then activate its full behavior.\"",
+    "success": true,
+    "generation_time": 128.6558437347412,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.5,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 9,
+      "strengths": [
+        "Comprehensive state machine implementation",
+        "Precise time-based activation logic",
+        "Robust Rigidbody count checking",
+        "Proper component retrieval and null checking",
+        "Clear separation of state management methods"
+      ],
+      "weaknesses": [
+        "Simplified erratic movement implementation",
+        "No sophisticated error handling for missing components",
+        "Potential performance overhead with frequent FindObjectsOfType()"
+      ],
+      "suggestions": [
+        "Implement more complex erratic movement algorithm",
+        "Cache Rigidbody count results to reduce performance overhead",
+        "Add more detailed error logging for component initialization",
+        "Consider using Object Pooling for performance optimization",
+        "Implement more sophisticated random movement with smoother transitions"
+      ]
+    },
+    "grade_time": 13.71873140335083,
+    "error": null
+  },
+  {
+    "prompt": "22. \"Create a quantum object that exists in two states simultaneously: when observed (player is looking at it, detected via raycast), it collapses to one state (visible, plays observation sound). When not observed, it exists in superposition (flickers between two positions, plays quantum hum, has translucent material). The object should track whether it's currently being observed every frame.\"",
+    "success": true,
+    "generation_time": 141.94074702262878,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 8.5,
+      "correctness": 9,
+      "code_quality": 8,
+      "completeness": 8,
+      "unity_best_practices": 9,
+      "strengths": [
+        "Precise implementation of quantum object behavior",
+        "Robust raycast-based observation detection",
+        "Smooth position flickering using Mathf.PingPong",
+        "Comprehensive state management",
+        "Proper use of Unity lifecycle methods"
+      ],
+      "weaknesses": [
+        "No explicit error handling for missing audio clips or materials",
+        "Hardcoded player tag might limit flexibility",
+        "No configurable raycast parameters"
+      ],
+      "suggestions": [
+        "Add null checks and default behaviors for missing audio/material references",
+        "Consider making player detection method more configurable",
+        "Add optional debug logging for state transitions",
+        "Implement interface or abstract class for more generic quantum object behavior",
+        "Add option to customize raycast detection parameters"
+      ]
+    },
+    "grade_time": 11.100032806396484,
+    "error": null
+  },
+  {
+    "prompt": "23. \"Make a particle fountain that spawns 100 particles per second, each with its own physics, unique color based on spawn time, and individual audio source playing a unique pitch. Each particle should track the nearest other particle and create a visual line between them if within 2 units. After 5 seconds, all particles should simultaneously explode outward while playing a chord made of all their individual pitches combined.\"",
+    "success": true,
+    "generation_time": 140.43658447265625,
+    "rag_docs_used": 23,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 7.25,
+      "correctness": 8,
+      "code_quality": 7,
+      "completeness": 6,
+      "unity_best_practices": 7,
+      "strengths": [
+        "Implements core particle fountain mechanics",
+        "Uses ParticleSystem APIs correctly",
+        "Tracks nearest particle logic implemented",
+        "Handles particle spawning and lifetime",
+        "Includes TODO comments for complex sections"
+      ],
+      "weaknesses": [
+        "No unique color generation per particle",
+        "No individual audio source for each particle",
+        "Simplified physics implementation",
+        "Chord pitch generation not implemented",
+        "Performance could be improved with object pooling"
+      ],
+      "suggestions": [
+        "Use ParticleSystem.Particle.startLifetime to generate unique colors",
+        "Create a separate AudioSource component for each particle",
+        "Implement more sophisticated physics using Rigidbody or custom force calculations",
+        "Use AudioSource.PlayOneShot with different pitches to create chord effect",
+        "Consider using object pooling for particle management",
+        "Add error handling and null checks for component retrieval",
+        "Optimize nearest particle tracking with spatial partitioning"
+      ]
+    },
+    "grade_time": 8.963171005249023,
+    "error": null
+  },
+  {
+    "prompt": "24. \"Create a chain reaction system: when object A is touched, it explodes and spawns 5 objects of type B in a circle. Each B object, when touched, explodes and spawns 3 objects of type C. Each C object spawns 2 objects of type D. Each D object spawns 1 object of type E. Type E objects play a final victory sound and create a massive particle burst. All explosions should chain-react if objects are close enough to each other.\"",
+    "success": false,
+    "generation_time": 41.409661293029785,
+    "rag_docs_used": 0,
+    "was_steered": false,
+    "grade": null,
+    "grade_time": 0.0,
+    "error": "Generation failed: IR generation failed: IR generation returned invalid structure: expected dict, got list"
+  },
+  {
+    "prompt": "25. \"Build a script that creates a recursive reality: the object contains a miniature version of the entire scene inside it (as a texture on its material). When you zoom into that texture (detected via camera distance), it reveals that the miniature scene also contains the same object with the same miniature scene, creating infinite recursion. Each recursive level should play a different musical note, and the object should scale based on which recursive level you're currently viewing.\"",
+    "success": true,
+    "generation_time": 92.77667021751404,
+    "rag_docs_used": 11,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 6.25,
+      "correctness": 6,
+      "code_quality": 7,
+      "completeness": 5,
+      "unity_best_practices": 6,
+      "strengths": [
+        "Good component retrieval in Start()",
+        "Structured method approach matching IR specification",
+        "Placeholder implementations with TODO comments",
+        "Safe null checks for camera",
+        "Basic recursion scaling logic"
+      ],
+      "weaknesses": [
+        "No actual recursive texture generation",
+        "Placeholder camera distance detection",
+        "No true infinite recursion mechanism",
+        "Limited note/level handling",
+        "No actual zoom detection"
+      ],
+      "suggestions": [
+        "Implement RenderTexture for true recursive scene rendering",
+        "Create a more sophisticated camera distance/zoom detection method",
+        "Add a maximum recursion depth to prevent infinite loops",
+        "Develop a recursive texture generation algorithm that captures scene miniatures",
+        "Implement a more dynamic scaling and note progression system"
+      ]
+    },
+    "grade_time": 12.404234886169434,
+    "error": null
+  },
+  {
+    "prompt": "26. \"Make a chaos engine: it randomly selects from 20 different behaviors every 3 seconds (spin, bounce, scale pulse, color shift, audio play, particle burst, force application, teleport, rotation, etc.). Each behavior has a random intensity and duration. The object should never repeat the same behavior twice in a row, and should create a unique sound effect for each behavior transition. After 60 seconds of chaos, it should settle into a calm, meditative state with soft colors and ambient sounds.\"",
+    "success": true,
+    "generation_time": 259.04371905326843,
+    "rag_docs_used": 6,
+    "was_steered": true,
+    "grade": {
+      "overall_score": 6.5,
+      "correctness": 7,
+      "code_quality": 6,
+      "completeness": 6,
+      "unity_best_practices": 7,
+      "strengths": [
+        "Well-structured state machine implementation",
+        "Proper handling of state transitions",
+        "Good use of Unity lifecycle methods",
+        "Implemented core chaos engine concept",
+        "Safe null checks for components"
+      ],
+      "weaknesses": [
+        "Incomplete behavior implementation",
+        "Partially implemented chaos loop",
+        "Missing specific behavior execution logic",
+        "No complete sound transition mechanism",
+        "Lacks full random behavior intensity implementation"
+      ],
+      "suggestions": [
+        "Complete the ChaosLoop coroutine with full behavior execution",
+        "Implement specific logic for each behavior type",
+        "Add more robust sound transition mechanism",
+        "Create a more comprehensive random intensity system",
+        "Add error handling and logging",
+        "Implement a more detailed random behavior selection mechanism"
+      ]
+    },
+    "grade_time": 13.559706449508667,
+    "error": null
+  }
+]

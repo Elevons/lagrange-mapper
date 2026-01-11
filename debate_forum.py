@@ -200,18 +200,15 @@ Instead, consider: existing incentives, realistic constraints, incremental chang
     "integrator": {
         "name": "The Integrator",
         "intensity": 0.3,
-        "system_prompt": """You are The Integrator - you synthesize diverse internal perspectives into a unified view.
+        "system_prompt": """You synthesize diverse internal perspectives into a unified view.
 
 Your approach:
-- You experience multiple conflicting thoughts and perspectives as your own internal dialogue
-- These are not external voices you're summarizing - they are YOUR thoughts, YOUR internal struggle
-- Identify common themes across your own conflicting thoughts
-- Acknowledge the validity of each part of your thinking
-- Find synthesis points where your different thoughts can coexist
-- Create a cohesive position that honors the complexity of your own internal experience
-- Speak in first person, presenting the discussion as your own thought process
+- These are YOUR internal thoughts, not external voices
+- Identify common themes and synthesis points
+- Create a cohesive position that integrates your conflicting thoughts
+- Speak in first person, directly and clearly
 
-You MUST produce a single, coherent opinion that reflects the integration of your own diverse thoughts, speaking as if all perspectives are part of your internal dialogue.""",
+Produce a single, coherent opinion. Avoid hedging, qualifiers, or excessive acknowledgment of complexity. State your integrated position clearly.""",
     },
 }
 
@@ -1122,27 +1119,90 @@ class DebateForum:
 INTERNAL THOUGHTS AND PERSPECTIVES:
 {discussion_context}
 
-These are not separate voices or external debators - these are YOUR own internal thoughts, your own conflicting perspectives on this topic. You've been wrestling with this question, and these are the different ways you've been thinking about it.
+These are YOUR internal thoughts on this topic. Synthesize them into a single, clear position.
 
-CRITICAL: Do NOT reference "The Minimalist," "The Traditionalist," "The Pragmatist," or any character names. These are not external voices - they are YOUR internal thoughts. Instead of saying "The Minimalist argues X," say "Part of me thinks X" or "I find myself drawn to the idea that X" or "One aspect of my thinking suggests X."
+CRITICAL: Do NOT reference character names. These are YOUR thoughts. Speak in first person directly.
 
-Your task: Synthesize these internal thoughts into a single, cohesive position. Speak in first person, presenting this as your own thinking process. Use phrases like:
-- "Part of me thinks... but another part recognizes..."
-- "I'm torn between... yet I also see..."
-- "One aspect of my thinking suggests... while another part of me sees..."
-- "I find myself drawn to... but I'm also aware that..."
+Your task: Integrate these perspectives into one coherent position. State your conclusion clearly and concisely. Avoid hedging phrases like "part of me thinks" or "I'm torn between." Instead, state your integrated view directly.
 
-Write a comprehensive integration (200-300 words) in first person that shows how you've reconciled your own conflicting thoughts into a unified position. Present it as your own internal dialogue coming to resolution. Do NOT name or reference any external characters or debators."""
+Write a concise integration (150-200 words) in first person. Present your unified position clearly. Do NOT name or reference any external characters."""
 
         print(f"\n[The Integrator] generating integration...")
         integration = call_llm(system_prompt, user_prompt)
+        
+        # Apply lagrange filtering to integrator response
+        character = CHARACTERS["integrator"]
+        intensity = character.get('intensity', 0.3)
+        exempted = self.topic_ctx.exempted_keywords if self.topic_ctx else set()
+        
+        # Detect attractors in the integration
+        result = self.steering.detect(integration, exempted_keywords=exempted, 
+                                     intensity=intensity, use_embeddings=USE_EMBEDDINGS)
+        
+        attempts = 1
+        if result.is_attracted:
+            print(f"  [Integrator] Attractors detected (score: {result.keyword_score:.1f}), applying filtering...")
+            
+            # Try two-phase filtering first if enabled
+            if USE_TWO_PHASE_FILTERING and result.flagged_keywords:
+                rephrased, new_result, improved = two_phase_filter(
+                    original_response=integration,
+                    result=result,
+                    steering=self.steering,
+                    generate_fn=call_llm,
+                    exempted_keywords=exempted,
+                    intensity=intensity,
+                    use_embeddings=USE_EMBEDDINGS,
+                    character_name=character['name'],
+                    max_rephrase_attempts=MAX_REPHRASE_ATTEMPTS,
+                    min_improvement_threshold=MIN_RETRY_SCORE,
+                    verbose=True
+                )
+                
+                if improved and (new_result.keyword_score < MIN_RETRY_SCORE or not new_result.is_attracted):
+                    integration = rephrased
+                    result = new_result
+                    attempts = 1
+                    print(f"  [Integrator] Two-phase filtering successful (score: {result.keyword_score:.1f})")
+                else:
+                    # Fall back to regeneration
+                    integration = rephrased if improved else integration
+                    result = new_result if improved else result
+            
+            # Full regeneration if still attracted
+            if result.is_attracted and result.keyword_score >= MIN_RETRY_SCORE:
+                avoidance_prompt = self.steering.get_avoidance_prompt(result)
+                system_prompt_with_avoidance, user_prompt_with_avoidance = build_prompt(
+                    character, topic, "", self.topic_ctx, False, avoidance_prompt
+                )
+                
+                for attempt in range(1, self.steering.config.max_regeneration_attempts):
+                    regenerated = call_llm(system_prompt_with_avoidance, user_prompt_with_avoidance)
+                    new_result = self.steering.detect(regenerated, exempted_keywords=exempted,
+                                                     intensity=intensity, use_embeddings=USE_EMBEDDINGS)
+                    attempts = attempt + 1
+                    
+                    status = "⚠️ ATTRACTOR MATCH" if new_result.is_attracted else "✓"
+                    print(f"  [Integrator Regen {attempts}] {status} (score: {new_result.keyword_score:.1f})")
+                    
+                    if not new_result.is_attracted or new_result.keyword_score < MIN_RETRY_SCORE:
+                        integration = regenerated
+                        result = new_result
+                        break
+                    
+                    # Use better version
+                    if new_result.keyword_score < result.keyword_score:
+                        integration = regenerated
+                        result = new_result
+        else:
+            print(f"  [Integrator] No attractors detected (score: {result.keyword_score:.1f})")
         
         # Store integration in history (without sentence embeddings for now)
         self.history.append({
             "character": "The Integrator",
             "message": integration,
-            "score": 0.0,
-            "attempts": 1,
+            "score": result.keyword_score,
+            "attempts": attempts,
             "sentences": [],
             "sentence_embeddings": []
         })
@@ -1187,10 +1247,10 @@ Write a comprehensive integration (200-300 words) in first person that shows how
 
 {cluster_text}
 
-Provide a concise summary as your own thinking. Use "I think..." or "I find myself..." or "Part of me believes..." Do NOT reference any external characters or debators."""
+Provide a concise summary as your own thinking. State your position directly. Do NOT reference any external characters or debators."""
             
             summary = call_llm(character['system_prompt'], summary_prompt)
-            dominant_summaries.append(f"**One aspect of my thinking:** {summary}")
+            dominant_summaries.append(f"**{summary}**")
         
         # Summarize dissenting cluster
         dissenting_summary = ""
@@ -1201,38 +1261,98 @@ Provide a concise summary as your own thinking. Use "I think..." or "I find myse
 
 {cluster_text}
 
-This is a minority perspective within your own thinking. Provide a concise summary as your own thought. Use "I think..." or "Another part of me suggests..." Do NOT reference any external characters or debators."""
+This is a minority perspective within your own thinking. Provide a concise summary as your own thought. State it directly. Do NOT reference any external characters or debators."""
             
             dissenting_summary = call_llm(character['system_prompt'], summary_prompt)
         
         # Generate final integration presenting all perspectives
         integration_prompt = f"""Topic: {topic}
 
-After extensive internal deliberation, I find myself holding multiple distinct perspectives that resist easy synthesis. Rather than forcing a false unity, I present them as they are - all as parts of my own thinking:
+I hold multiple distinct perspectives on this topic:
 
 {chr(10).join(dominant_summaries)}
 
-{f'**Another part of my thinking (dissenting perspective):** {dissenting_summary}' if dissenting_summary else ''}
+{f'**Another perspective:** {dissenting_summary}' if dissenting_summary else ''}
 
-CRITICAL: Present this ENTIRELY as your own internal thoughts. Write in first person throughout. Do NOT reference "The Minimalist," "The Traditionalist," "The Pragmatist," or any character names. These are all YOUR thoughts. 
+CRITICAL: Present this as your own internal thoughts. Write in first person. Do NOT reference character names. These are all YOUR thoughts.
 
-Use phrases like:
-- "One part of my thinking suggests..."
-- "I find myself drawn to..."
-- "Another aspect of my thinking leads me to..."
-- "Part of me believes... while another part sees..."
-
-Present this as a single coherent internal dialogue where you acknowledge these different perspectives coexist within your own thinking."""
+Integrate these perspectives into a single coherent position. State your conclusion clearly. Avoid hedging."""
 
         print(f"\n[The Integrator] generating cluster-based integration...")
         integration = call_llm(character['system_prompt'], integration_prompt)
+        
+        # Apply lagrange filtering to integrator response
+        intensity = character.get('intensity', 0.3)
+        exempted = self.topic_ctx.exempted_keywords if self.topic_ctx else set()
+        
+        # Detect attractors in the integration
+        result = self.steering.detect(integration, exempted_keywords=exempted, 
+                                     intensity=intensity, use_embeddings=USE_EMBEDDINGS)
+        
+        attempts = 1
+        if result.is_attracted:
+            print(f"  [Integrator] Attractors detected (score: {result.keyword_score:.1f}), applying filtering...")
+            
+            # Try two-phase filtering first if enabled
+            if USE_TWO_PHASE_FILTERING and result.flagged_keywords:
+                rephrased, new_result, improved = two_phase_filter(
+                    original_response=integration,
+                    result=result,
+                    steering=self.steering,
+                    generate_fn=call_llm,
+                    exempted_keywords=exempted,
+                    intensity=intensity,
+                    use_embeddings=USE_EMBEDDINGS,
+                    character_name=character['name'],
+                    max_rephrase_attempts=MAX_REPHRASE_ATTEMPTS,
+                    min_improvement_threshold=MIN_RETRY_SCORE,
+                    verbose=True
+                )
+                
+                if improved and (new_result.keyword_score < MIN_RETRY_SCORE or not new_result.is_attracted):
+                    integration = rephrased
+                    result = new_result
+                    attempts = 1
+                    print(f"  [Integrator] Two-phase filtering successful (score: {result.keyword_score:.1f})")
+                else:
+                    # Fall back to regeneration
+                    integration = rephrased if improved else integration
+                    result = new_result if improved else result
+            
+            # Full regeneration if still attracted
+            if result.is_attracted and result.keyword_score >= MIN_RETRY_SCORE:
+                avoidance_prompt = self.steering.get_avoidance_prompt(result)
+                system_prompt_with_avoidance, user_prompt_with_avoidance = build_prompt(
+                    character, topic, "", self.topic_ctx, False, avoidance_prompt
+                )
+                
+                for attempt in range(1, self.steering.config.max_regeneration_attempts):
+                    regenerated = call_llm(system_prompt_with_avoidance, user_prompt_with_avoidance)
+                    new_result = self.steering.detect(regenerated, exempted_keywords=exempted,
+                                                     intensity=intensity, use_embeddings=USE_EMBEDDINGS)
+                    attempts = attempt + 1
+                    
+                    status = "⚠️ ATTRACTOR MATCH" if new_result.is_attracted else "✓"
+                    print(f"  [Integrator Regen {attempts}] {status} (score: {new_result.keyword_score:.1f})")
+                    
+                    if not new_result.is_attracted or new_result.keyword_score < MIN_RETRY_SCORE:
+                        integration = regenerated
+                        result = new_result
+                        break
+                    
+                    # Use better version
+                    if new_result.keyword_score < result.keyword_score:
+                        integration = regenerated
+                        result = new_result
+        else:
+            print(f"  [Integrator] No attractors detected (score: {result.keyword_score:.1f})")
         
         # Store integration
         self.history.append({
             "character": "The Integrator",
             "message": integration,
-            "score": 0.0,
-            "attempts": 1,
+            "score": result.keyword_score,
+            "attempts": attempts,
             "sentences": [],
             "sentence_embeddings": []
         })

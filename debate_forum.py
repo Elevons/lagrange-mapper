@@ -1102,12 +1102,71 @@ class DebateForum:
             print("Error: Integrator character not found")
             return
         
-        # Build full discussion context as internal thoughts (without character labels)
-        discussion_context = "\n\n".join([
-            msg['message']
-            for msg in self.history
-            if msg['character'] != "The Integrator"  # Exclude any previous integrations
-        ])
+        # Collect sentence-level data (same as in _check_and_trigger_integration)
+        all_sentence_data = []
+        for msg in self.history:
+            if msg.get('sentence_embeddings') and msg['character'] != "The Integrator":
+                sentences = msg.get('sentences', [])
+                embeddings = msg['sentence_embeddings']
+                character = msg['character']
+                
+                for sent, emb in zip(sentences, embeddings):
+                    if emb is not None:  # Only include successful embeddings
+                        all_sentence_data.append((character, sent, emb))
+        
+        if len(all_sentence_data) < 2:
+            # Fallback to full messages if not enough sentence data
+            print(f"  [Warning] Not enough sentence-level data, using full messages")
+            discussion_context = "\n\n".join([
+                msg['message']
+                for msg in self.history
+                if msg['character'] != "The Integrator"
+            ])
+        else:
+            # Calculate similarity metrics
+            similarity_metrics = calculate_max_pairwise_similarity(all_sentence_data)
+            
+            # Filter to only include sentences that have converged (high similarity with others)
+            # A sentence is considered "converged" if it has at least one similarity >= threshold
+            threshold = INTEGRATION_PERCENTILE_THRESHOLD
+            
+            # Calculate max similarity for each sentence (its highest similarity with any other sentence)
+            sentence_max_similarities = {}
+            for i, (char1, sent1, emb1) in enumerate(all_sentence_data):
+                max_sim_for_sentence = -1.0
+                for j, (char2, sent2, emb2) in enumerate(all_sentence_data):
+                    if i != j:  # Don't compare with itself
+                        similarity = float(np.dot(emb1, emb2))
+                        if similarity > max_sim_for_sentence:
+                            max_sim_for_sentence = similarity
+                sentence_max_similarities[(char1, sent1)] = max_sim_for_sentence
+            
+            # Filter sentences: only include those with max similarity >= threshold
+            filtered_sentences = [
+                (char, sent) for (char, sent), max_sim in sentence_max_similarities.items()
+                if max_sim >= threshold
+            ]
+            
+            if not filtered_sentences:
+                # Fallback: if no sentences meet threshold, use all sentences
+                print(f"  [Warning] No sentences met threshold ({threshold:.3f}), using all sentences")
+                filtered_sentences = [(char, sent) for char, sent, _ in all_sentence_data]
+            else:
+                print(f"  [Integration] Filtered to {len(filtered_sentences)}/{len(all_sentence_data)} sentences (threshold: {threshold:.3f})")
+            
+            # Group sentences by character and build context
+            sentences_by_character = defaultdict(list)
+            for char, sent in filtered_sentences:
+                sentences_by_character[char].append(sent)
+            
+            # Build discussion context from filtered sentences only
+            discussion_parts = []
+            for char, sentences in sentences_by_character.items():
+                # Join sentences from same character
+                char_text = " ".join(sentences)
+                discussion_parts.append(char_text)
+            
+            discussion_context = "\n\n".join(discussion_parts)
         
         topic = self.topic_ctx.topic if self.topic_ctx else "the discussion"
         
@@ -1172,12 +1231,14 @@ Write a concise integration (150-200 words) in first person. Present your unifie
             # Full regeneration if still attracted
             if result.is_attracted and result.keyword_score >= MIN_RETRY_SCORE:
                 avoidance_prompt = self.steering.get_avoidance_prompt(result)
-                system_prompt_with_avoidance, user_prompt_with_avoidance = build_prompt(
-                    character, topic, "", self.topic_ctx, False, avoidance_prompt
-                )
+                # Use the original integration prompt structure, not build_prompt
+                # Add avoidance instructions to the original user_prompt
+                user_prompt_with_avoidance = user_prompt
+                if avoidance_prompt:
+                    user_prompt_with_avoidance += f"\n\n{avoidance_prompt}"
                 
                 for attempt in range(1, self.steering.config.max_regeneration_attempts):
-                    regenerated = call_llm(system_prompt_with_avoidance, user_prompt_with_avoidance)
+                    regenerated = call_llm(system_prompt, user_prompt_with_avoidance)
                     new_result = self.steering.detect(regenerated, exempted_keywords=exempted,
                                                      intensity=intensity, use_embeddings=USE_EMBEDDINGS)
                     attempts = attempt + 1
@@ -1322,12 +1383,14 @@ Integrate these perspectives into a single coherent position. State your conclus
             # Full regeneration if still attracted
             if result.is_attracted and result.keyword_score >= MIN_RETRY_SCORE:
                 avoidance_prompt = self.steering.get_avoidance_prompt(result)
-                system_prompt_with_avoidance, user_prompt_with_avoidance = build_prompt(
-                    character, topic, "", self.topic_ctx, False, avoidance_prompt
-                )
+                # Use the original integration prompt structure, not build_prompt
+                # Add avoidance instructions to the original integration_prompt
+                integration_prompt_with_avoidance = integration_prompt
+                if avoidance_prompt:
+                    integration_prompt_with_avoidance += f"\n\n{avoidance_prompt}"
                 
                 for attempt in range(1, self.steering.config.max_regeneration_attempts):
-                    regenerated = call_llm(system_prompt_with_avoidance, user_prompt_with_avoidance)
+                    regenerated = call_llm(character['system_prompt'], integration_prompt_with_avoidance)
                     new_result = self.steering.detect(regenerated, exempted_keywords=exempted,
                                                      intensity=intensity, use_embeddings=USE_EMBEDDINGS)
                     attempts = attempt + 1

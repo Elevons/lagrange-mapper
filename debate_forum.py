@@ -10,6 +10,8 @@ Usage:
     python debate_forum.py --model granite-3.1-8b
     python debate_forum.py --compare          # Show filtered vs unfiltered side-by-side
     python debate_forum.py --model local-model --compare
+    python debate_forum.py --integration      # Enable integration feature
+    python debate_forum.py --integration --integration-threshold 0.8 --convergence-rounds 5
 """
 
 import json
@@ -17,10 +19,19 @@ import random
 import os
 import re
 import requests
-from typing import List, Dict, Set, Optional
+import numpy as np
+from typing import List, Dict, Set, Optional, Tuple
 from dataclasses import dataclass, field
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
+
+# Optional sklearn import for clustering
+try:
+    from sklearn.cluster import KMeans
+    HAS_SKLEARN = True
+except ImportError:
+    HAS_SKLEARN = False
+    print("Warning: sklearn not available. Clustering fallback will use simple distance-based clustering.")
 
 # Import the steering system
 from attractor_steering import (
@@ -60,6 +71,14 @@ MAX_REPHRASE_ATTEMPTS = 2  # Max attempts for Phase 2 targeted rephrasing
 COMPARE_MODE = False  # Show both filtered and unfiltered responses
 USE_DUAL_MODE = True  # Use both neutral and controversial attractors if available
 CONTROVERSIAL_WEIGHT = 2.0  # How much to weight controversial attractor matches
+
+# Integration Feature
+ENABLE_INTEGRATION = False  # Enable integration feature
+INTEGRATION_THRESHOLD = 0.75  # Threshold for max similarity (0-1)
+INTEGRATION_PERCENTILE_THRESHOLD = 0.43  # Threshold for 95th percentile (more conservative, default 0.43)
+MAX_CONVERGENCE_ROUNDS = 3  # Number of rounds before checking integration
+MAX_ROUNDS_BEFORE_CLUSTERING = 6  # If no convergence trend after this many rounds, use clustering
+SHOW_SIMILARITY_SCORES = True  # Display similarity metrics during rounds
 
 # ============================================================================
 # TOPIC ANALYSIS
@@ -177,6 +196,23 @@ Your approach:
 You MUST NOT propose: utopian visions, solutions requiring mass coordination, or new institutions.
 Instead, consider: existing incentives, realistic constraints, incremental changes.""",
     },
+    
+    "integrator": {
+        "name": "The Integrator",
+        "intensity": 0.3,
+        "system_prompt": """You are The Integrator - you synthesize diverse internal perspectives into a unified view.
+
+Your approach:
+- You experience multiple conflicting thoughts and perspectives as your own internal dialogue
+- These are not external voices you're summarizing - they are YOUR thoughts, YOUR internal struggle
+- Identify common themes across your own conflicting thoughts
+- Acknowledge the validity of each part of your thinking
+- Find synthesis points where your different thoughts can coexist
+- Create a cohesive position that honors the complexity of your own internal experience
+- Speak in first person, presenting the discussion as your own thought process
+
+You MUST produce a single, coherent opinion that reflects the integration of your own diverse thoughts, speaking as if all perspectives are part of your internal dialogue.""",
+    },
 }
 
 # ============================================================================
@@ -245,6 +281,309 @@ def call_anthropic(system_prompt: str, user_prompt: str) -> str:
             
     except Exception as e:
         return f"[Error: {e}]"
+
+
+# ============================================================================
+# SENTENCE EMBEDDING & SIMILARITY
+# ============================================================================
+
+def split_into_sentences(text: str) -> List[str]:
+    """
+    Split text into sentences using regex.
+    
+    Splits on sentence boundaries (. ! ?) followed by space or end of string.
+    """
+    # Pattern: sentence ending punctuation followed by space or end of string
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$', text)
+    # Filter out empty strings and strip whitespace
+    sentences = [s.strip() for s in sentences if s.strip()]
+    return sentences
+
+
+def embed_sentences(sentences: List[str], steering) -> List[Optional[np.ndarray]]:
+    """
+    Embed a list of sentences using the steering system's embedding method.
+    
+    Handles both AttractorSteering and DualModeAttractorSteering objects.
+    
+    Returns list of embeddings (or None if embedding failed).
+    """
+    # Get the actual steering object that has get_embedding method
+    if isinstance(steering, DualModeAttractorSteering):
+        # Use neutral_steering if available, otherwise controversial_steering
+        actual_steering = steering.neutral_steering or steering.controversial_steering
+        if actual_steering is None:
+            # No steering available, return None embeddings
+            return [None] * len(sentences)
+    else:
+        actual_steering = steering
+    
+    embeddings = []
+    for sentence in sentences:
+        emb = actual_steering.get_embedding(sentence)
+        embeddings.append(emb)
+    return embeddings
+
+
+def calculate_max_pairwise_similarity(all_sentence_embeddings: List[Tuple[str, str, np.ndarray]]) -> Dict:
+    """
+    Calculate similarity metrics between all sentence embeddings.
+    
+    Filters out exact quote matches and provides multiple similarity metrics.
+    
+    Args:
+        all_sentence_embeddings: List of (character_name, sentence_text, embedding) tuples
+                                 Only includes non-None embeddings
+    
+    Returns:
+        Dict with:
+        - max_similarity: Highest cosine similarity (excluding exact quotes)
+        - percentile_90: 90th percentile similarity
+        - percentile_95: 95th percentile similarity
+        - avg_similarity: Average of all pairwise similarities
+        - max_pair: Tuple of (char1, sentence1, char2, sentence2) for the max pair
+        - total_pairs: Number of pairs compared
+        - exact_quote_matches: Number of exact quote matches filtered out
+    """
+    if len(all_sentence_embeddings) < 2:
+        return {
+            "max_similarity": 0.0,
+            "percentile_90": 0.0,
+            "percentile_95": 0.0,
+            "avg_similarity": 0.0,
+            "max_pair": None,
+            "total_pairs": 0,
+            "exact_quote_matches": 0
+        }
+    
+    max_sim = -1.0
+    max_pair = None
+    similarities = []
+    exact_quote_matches = 0
+    
+    # Helper to check if sentences are exact quotes (one contains the other with >80% overlap)
+    def is_exact_quote(sent1: str, sent2: str) -> bool:
+        sent1_lower = sent1.lower().strip()
+        sent2_lower = sent2.lower().strip()
+        # Check if one is a substring of the other (with some tolerance)
+        if len(sent1_lower) < 20 or len(sent2_lower) < 20:
+            return False
+        # Check for high overlap (one contains most of the other)
+        if sent1_lower in sent2_lower or sent2_lower in sent1_lower:
+            # If one is >80% of the other, consider it a quote
+            min_len = min(len(sent1_lower), len(sent2_lower))
+            max_len = max(len(sent1_lower), len(sent2_lower))
+            if min_len / max_len > 0.8:
+                return True
+        return False
+    
+    # Compare all pairs
+    for i, (char1, sent1, emb1) in enumerate(all_sentence_embeddings):
+        for j, (char2, sent2, emb2) in enumerate(all_sentence_embeddings[i+1:], start=i+1):
+            # Skip exact quote matches
+            if is_exact_quote(sent1, sent2):
+                exact_quote_matches += 1
+                continue
+            
+            # Cosine similarity (embeddings should already be normalized)
+            similarity = float(np.dot(emb1, emb2))
+            similarities.append(similarity)
+            
+            if similarity > max_sim:
+                max_sim = similarity
+                max_pair = (char1, sent1[:100], char2, sent2[:100])
+    
+    if not similarities:
+        return {
+            "max_similarity": 0.0,
+            "percentile_90": 0.0,
+            "percentile_95": 0.0,
+            "avg_similarity": 0.0,
+            "max_pair": None,
+            "total_pairs": 0,
+            "exact_quote_matches": exact_quote_matches
+        }
+    
+    avg_sim = np.mean(similarities)
+    percentile_90 = np.percentile(similarities, 90)
+    percentile_95 = np.percentile(similarities, 95)
+    
+    return {
+        "max_similarity": max_sim,
+        "percentile_90": percentile_90,
+        "percentile_95": percentile_95,
+        "avg_similarity": avg_sim,
+        "max_pair": max_pair,
+        "total_pairs": len(similarities),
+        "exact_quote_matches": exact_quote_matches
+    }
+
+
+def check_convergence_trend(convergence_trend: List[Dict], min_rounds: int = 3) -> bool:
+    """
+    Check if convergence is trending upward over recent rounds.
+    
+    Args:
+        convergence_trend: List of trend dictionaries with 'direction' and 'percentile_95'
+        min_rounds: Minimum number of rounds to check
+    
+    Returns:
+        True if trending upward, False otherwise
+    """
+    if len(convergence_trend) < min_rounds:
+        return False
+    
+    # Check recent rounds (last min_rounds)
+    recent = convergence_trend[-min_rounds:]
+    
+    # Count increasing vs decreasing/stable
+    increasing_count = sum(1 for t in recent if t['direction'] == 'increasing')
+    decreasing_count = sum(1 for t in recent if t['direction'] == 'decreasing')
+    
+    # Also check if percentile_95 is actually increasing
+    if len(recent) >= 2:
+        first_p95 = recent[0]['percentile_95']
+        last_p95 = recent[-1]['percentile_95']
+        percentile_increasing = last_p95 > first_p95 + 0.02  # At least 0.02 increase
+    
+    # Trending upward if: more increasing than decreasing AND percentile is increasing
+    return increasing_count > decreasing_count and percentile_increasing
+
+
+def cluster_opinions(all_sentence_data: List[Tuple[str, str, np.ndarray]], n_clusters: int = 4) -> List[Dict]:
+    """
+    Cluster sentences into opinion groups using K-means.
+    
+    Args:
+        all_sentence_data: List of (character_name, sentence_text, embedding) tuples
+        n_clusters: Number of clusters to create (will use min(n_clusters, len(data)))
+    
+    Returns:
+        List of cluster dicts with:
+        - cluster_id: Cluster number
+        - sentences: List of (character, sentence) tuples in this cluster
+        - centroid: Cluster centroid embedding
+        - size: Number of sentences in cluster
+    """
+    if len(all_sentence_data) < 2:
+        return []
+    
+    # Prepare embeddings matrix
+    embeddings = np.array([emb for _, _, emb in all_sentence_data])
+    sentences_info = [(char, sent) for char, sent, _ in all_sentence_data]
+    
+    # Determine actual number of clusters
+    actual_n_clusters = min(n_clusters, len(all_sentence_data))
+    if actual_n_clusters < 2:
+        return []
+    
+    if HAS_SKLEARN:
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=actual_n_clusters, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(embeddings)
+        centroids = kmeans.cluster_centers_
+    else:
+        # Simple distance-based clustering fallback
+        # Initialize centroids randomly
+        np.random.seed(42)
+        centroids = embeddings[np.random.choice(len(embeddings), actual_n_clusters, replace=False)]
+        
+        # Simple k-means iteration
+        for _ in range(10):  # Max 10 iterations
+            # Assign to nearest centroid
+            distances = np.array([[np.linalg.norm(emb - centroid) for centroid in centroids] for emb in embeddings])
+            cluster_labels = np.argmin(distances, axis=1)
+            
+            # Update centroids
+            new_centroids = []
+            for i in range(actual_n_clusters):
+                cluster_points = embeddings[cluster_labels == i]
+                if len(cluster_points) > 0:
+                    new_centroids.append(np.mean(cluster_points, axis=0))
+                else:
+                    new_centroids.append(centroids[i])
+            centroids = np.array(new_centroids)
+    
+    # Group sentences by cluster
+    clusters = defaultdict(list)
+    for idx, label in enumerate(cluster_labels):
+        clusters[label].append(sentences_info[idx])
+    
+    # Build cluster results
+    cluster_results = []
+    for cluster_id, sentences in sorted(clusters.items()):
+        # Calculate average similarity within cluster
+        cluster_embeddings = [embeddings[i] for i, label in enumerate(cluster_labels) if label == cluster_id]
+        if len(cluster_embeddings) > 1:
+            # Calculate average pairwise similarity within cluster
+            similarities = []
+            for i in range(len(cluster_embeddings)):
+                for j in range(i + 1, len(cluster_embeddings)):
+                    sim = float(np.dot(cluster_embeddings[i], cluster_embeddings[j]))
+                    similarities.append(sim)
+            avg_internal_similarity = np.mean(similarities) if similarities else 0.0
+        else:
+            avg_internal_similarity = 1.0
+        
+        cluster_results.append({
+            "cluster_id": cluster_id,
+            "sentences": sentences,
+            "centroid": centroids[cluster_id],
+            "size": len(sentences),
+            "avg_internal_similarity": avg_internal_similarity
+        })
+    
+    # Sort by size (largest first)
+    cluster_results.sort(key=lambda x: x['size'], reverse=True)
+    
+    return cluster_results
+
+
+def find_least_agreeing_cluster(clusters: List[Dict], all_sentence_data: List[Tuple[str, str, np.ndarray]]) -> Optional[Dict]:
+    """
+    Find the cluster that least agrees with others (lowest average similarity to other clusters).
+    
+    Args:
+        clusters: List of cluster dicts
+        all_sentence_data: All sentence data for comparison
+    
+    Returns:
+        Cluster dict with lowest agreement, or None
+    """
+    if len(clusters) < 2:
+        return None
+    
+    # Build embedding lookup
+    embedding_map = {sent: emb for char, sent, emb in all_sentence_data}
+    
+    cluster_agreement_scores = []
+    for cluster in clusters:
+        # Calculate average similarity between this cluster and all others
+        other_similarities = []
+        for other_cluster in clusters:
+            if other_cluster['cluster_id'] == cluster['cluster_id']:
+                continue
+            
+            # Compare sentences from this cluster to sentences from other cluster
+            for char1, sent1 in cluster['sentences']:
+                if sent1 not in embedding_map:
+                    continue
+                emb1 = embedding_map[sent1]
+                for char2, sent2 in other_cluster['sentences']:
+                    if sent2 not in embedding_map:
+                        continue
+                    emb2 = embedding_map[sent2]
+                    sim = float(np.dot(emb1, emb2))
+                    other_similarities.append(sim)
+        
+        avg_agreement = np.mean(other_similarities) if other_similarities else 0.0
+        cluster_agreement_scores.append((cluster, avg_agreement))
+    
+    # Return cluster with lowest agreement
+    if cluster_agreement_scores:
+        least_agreeing = min(cluster_agreement_scores, key=lambda x: x[1])
+        return least_agreeing[0]
+    return None
 
 
 # ============================================================================
@@ -448,11 +787,16 @@ class DebateForum:
         self.history: List[Dict] = []
         self.topic_ctx: Optional[TopicContext] = None
         self.stats = Counter()
+        self.round_count = 0  # Track number of rounds for integration checking
+        self.similarity_history = []  # Track similarity trends over rounds
+        self.convergence_trend = []  # Track convergence trend (increasing/decreasing/stable)
     
     def set_topic(self, topic: str):
         """Set new topic and analyze for exemptions using steering config"""
         self.topic_ctx = analyze_topic(topic, steering=self.steering)
         self.history = []
+        self.round_count = 0
+        self.similarity_history = []  # Reset similarity tracking
         print(f"\n{self.topic_ctx.summary()}")
     
     def get_context(self, max_messages: int = 6) -> str:
@@ -485,11 +829,20 @@ class DebateForum:
         for attractor in result.triggered_attractors:
             self.stats[attractor] += 1
         
+        # Embed sentences if integration is enabled
+        sentences = []
+        sentence_embeddings = []
+        if ENABLE_INTEGRATION:
+            sentences = split_into_sentences(response)
+            sentence_embeddings = embed_sentences(sentences, self.steering)
+        
         self.history.append({
             "character": character['name'],
             "message": response,
             "score": result.keyword_score,
-            "attempts": attempts
+            "attempts": attempts,
+            "sentences": sentences,
+            "sentence_embeddings": sentence_embeddings  # List of np.ndarray or None
         })
         
         return response
@@ -498,7 +851,8 @@ class DebateForum:
         """Run a round with all characters"""
         
         if char_order is None:
-            char_order = list(CHARACTERS.keys())
+            # Exclude integrator from normal debate rounds
+            char_order = [cid for cid in CHARACTERS.keys() if cid != "integrator"]
             random.shuffle(char_order)
         
         is_new_topic = topic is not None
@@ -551,11 +905,20 @@ class DebateForum:
                     print(f"\n  Flagged: {', '.join(filtered_result.flagged_keywords[:10])}")
                 
                 # Add filtered version to history (for context in next round)
+                # Embed sentences if integration is enabled
+                sentences = []
+                sentence_embeddings = []
+                if ENABLE_INTEGRATION:
+                    sentences = split_into_sentences(filtered)
+                    sentence_embeddings = embed_sentences(sentences, self.steering)
+                
                 self.history.append({
                     "character": CHARACTERS[char_id]['name'],
                     "message": filtered,
                     "score": filtered_result.keyword_score,
-                    "attempts": attempts
+                    "attempts": attempts,
+                    "sentences": sentences,
+                    "sentence_embeddings": sentence_embeddings
                 })
             else:
                 # Normal mode - just filtered
@@ -565,6 +928,108 @@ class DebateForum:
                 print(f"[{CHARACTERS[char_id]['name']}]")
                 print(f"{'='*70}")
                 print(response)
+        
+        # Increment round count after all characters have responded
+        self.round_count += 1
+        
+        # Show similarity scores after each round if enabled
+        if ENABLE_INTEGRATION and SHOW_SIMILARITY_SCORES:
+            # Collect all sentence embeddings from history
+            all_sentence_data = []
+            for msg in self.history:
+                if msg.get('sentence_embeddings'):
+                    sentences = msg.get('sentences', [])
+                    embeddings = msg['sentence_embeddings']
+                    character = msg['character']
+                    
+                    for sent, emb in zip(sentences, embeddings):
+                        if emb is not None:  # Only include successful embeddings
+                            all_sentence_data.append((character, sent, emb))
+            
+            if len(all_sentence_data) >= 2:
+                similarity_metrics = calculate_max_pairwise_similarity(all_sentence_data)
+                
+                # Store in history for trend tracking
+                self.similarity_history.append({
+                    "round": self.round_count,
+                    "max_similarity": similarity_metrics['max_similarity'],
+                    "percentile_90": similarity_metrics['percentile_90'],
+                    "percentile_95": similarity_metrics['percentile_95'],
+                    "avg_similarity": similarity_metrics['avg_similarity'],
+                    "exact_quote_matches": similarity_metrics['exact_quote_matches']
+                })
+                
+                # Calculate trend (if we have at least 2 rounds)
+                trend = ""
+                trend_direction = "stable"
+                if len(self.similarity_history) >= 2:
+                    prev_avg = self.similarity_history[-2]['avg_similarity']
+                    curr_avg = similarity_metrics['avg_similarity']
+                    if curr_avg > prev_avg + 0.05:
+                        trend = " ↗️ (increasing)"
+                        trend_direction = "increasing"
+                    elif curr_avg < prev_avg - 0.05:
+                        trend = " ↘️ (decreasing)"
+                        trend_direction = "decreasing"
+                    else:
+                        trend = " → (stable)"
+                        trend_direction = "stable"
+                
+                # Track convergence trend
+                self.convergence_trend.append({
+                    "round": self.round_count,
+                    "direction": trend_direction,
+                    "percentile_95": similarity_metrics['percentile_95'],
+                    "avg_similarity": similarity_metrics['avg_similarity']
+                })
+                
+                print(f"\n{'─'*70}")
+                print(f"[Similarity Check] Round {self.round_count}")
+                print(f"{'─'*70}")
+                print(f"Max similarity (no quotes): {similarity_metrics['max_similarity']:.3f}")
+                print(f"90th percentile: {similarity_metrics['percentile_90']:.3f}")
+                print(f"95th percentile: {similarity_metrics['percentile_95']:.3f}")
+                print(f"Average similarity: {similarity_metrics['avg_similarity']:.3f}{trend}")
+                print(f"Exact quote matches filtered: {similarity_metrics['exact_quote_matches']}")
+                print(f"Total pairs compared: {similarity_metrics['total_pairs']}")
+                if similarity_metrics['max_pair']:
+                    char1, sent1, char2, sent2 = similarity_metrics['max_pair']
+                    print(f"\nMost similar pair:")
+                    print(f"  [{char1}]: {sent1}...")
+                    print(f"  [{char2}]: {sent2}...")
+                print(f"Threshold: {INTEGRATION_PERCENTILE_THRESHOLD:.3f} (using 95th percentile)")
+                
+                # Use 95th percentile for integration threshold (more robust than max)
+                similarity_for_threshold = similarity_metrics['percentile_95']
+                
+                # Check if threshold is met (only trigger integration after min rounds)
+                if self.round_count >= MAX_CONVERGENCE_ROUNDS:
+                    if similarity_for_threshold >= INTEGRATION_PERCENTILE_THRESHOLD:
+                        print(f"\n{'='*70}")
+                        print(f"🎯 INTEGRATION THRESHOLD REACHED ({similarity_for_threshold:.3f} >= {INTEGRATION_PERCENTILE_THRESHOLD:.3f})")
+                        print(f"{'='*70}")
+                        self._generate_integration()
+                    elif self.round_count >= MAX_ROUNDS_BEFORE_CLUSTERING:
+                        # Check if convergence is trending upward
+                        is_converging = check_convergence_trend(self.convergence_trend, min_rounds=3)
+                        if not is_converging:
+                            print(f"\n{'='*70}")
+                            print(f"⚠️ NO CONVERGENCE TREND DETECTED AFTER {self.round_count} ROUNDS")
+                            print(f"  Using cluster-based analysis instead of full integration")
+                            print(f"{'='*70}")
+                            self._generate_cluster_integration(all_sentence_data)
+                        else:
+                            print(f"  (Below threshold but trending upward, continuing debate...)")
+                    else:
+                        print(f"  (Below threshold, continuing debate...)")
+                else:
+                    print(f"  (Need {MAX_CONVERGENCE_ROUNDS - self.round_count} more round(s) before integration check)")
+            elif len(all_sentence_data) < 2:
+                print(f"\n[Integration] Not enough embedded sentences to check similarity (need at least 2)")
+        
+        # Legacy check (kept for backward compatibility, but above handles it now)
+        # if ENABLE_INTEGRATION and self.round_count >= MAX_CONVERGENCE_ROUNDS:
+        #     self._check_and_trigger_integration()
     
     def show_stats(self):
         """Show session statistics"""
@@ -587,14 +1052,218 @@ class DebateForum:
             for attractor, count in self.stats.most_common():
                 print(f"  {attractor}: {count}")
     
+    def _check_and_trigger_integration(self):
+        """Check if integration threshold is met and trigger integration if so"""
+        # Collect all sentence embeddings from history
+        all_sentence_data = []
+        for msg in self.history:
+            if msg.get('sentence_embeddings'):
+                sentences = msg.get('sentences', [])
+                embeddings = msg['sentence_embeddings']
+                character = msg['character']
+                
+                for sent, emb in zip(sentences, embeddings):
+                    if emb is not None:  # Only include successful embeddings
+                        all_sentence_data.append((character, sent, emb))
+        
+        if len(all_sentence_data) < 2:
+            if SHOW_SIMILARITY_SCORES:
+                print(f"\n[Integration] Not enough embedded sentences to check similarity")
+            return
+        
+        # Calculate max pairwise similarity
+        similarity_metrics = calculate_max_pairwise_similarity(all_sentence_data)
+        max_sim = similarity_metrics['max_similarity']
+        
+        if SHOW_SIMILARITY_SCORES:
+            print(f"\n{'─'*70}")
+            print(f"[Similarity Check] Round {self.round_count}")
+            print(f"{'─'*70}")
+            print(f"Max pairwise similarity: {max_sim:.3f}")
+            print(f"Average similarity: {similarity_metrics['avg_similarity']:.3f}")
+            print(f"Total pairs compared: {similarity_metrics['total_pairs']}")
+            if similarity_metrics['max_pair']:
+                char1, sent1, char2, sent2 = similarity_metrics['max_pair']
+                print(f"\nMost similar pair:")
+                print(f"  [{char1}]: {sent1}...")
+                print(f"  [{char2}]: {sent2}...")
+            print(f"Threshold: {INTEGRATION_THRESHOLD:.3f}")
+        
+        # Check if threshold is met
+        if max_sim >= INTEGRATION_THRESHOLD:
+            print(f"\n{'='*70}")
+            print(f"🎯 INTEGRATION THRESHOLD REACHED ({max_sim:.3f} >= {INTEGRATION_THRESHOLD:.3f})")
+            print(f"{'='*70}")
+            self._generate_integration()
+        else:
+            if SHOW_SIMILARITY_SCORES:
+                print(f"  (Below threshold, continuing debate...)")
+    
+    def _generate_integration(self):
+        """Generate integration response from The Integrator"""
+        if "integrator" not in CHARACTERS:
+            print("Error: Integrator character not found")
+            return
+        
+        # Build full discussion context as internal thoughts (without character labels)
+        discussion_context = "\n\n".join([
+            msg['message']
+            for msg in self.history
+            if msg['character'] != "The Integrator"  # Exclude any previous integrations
+        ])
+        
+        topic = self.topic_ctx.topic if self.topic_ctx else "the discussion"
+        
+        character = CHARACTERS["integrator"]
+        system_prompt = character['system_prompt']
+        
+        user_prompt = f"""Topic: {topic}
+
+INTERNAL THOUGHTS AND PERSPECTIVES:
+{discussion_context}
+
+These are not separate voices or external debators - these are YOUR own internal thoughts, your own conflicting perspectives on this topic. You've been wrestling with this question, and these are the different ways you've been thinking about it.
+
+CRITICAL: Do NOT reference "The Minimalist," "The Traditionalist," "The Pragmatist," or any character names. These are not external voices - they are YOUR internal thoughts. Instead of saying "The Minimalist argues X," say "Part of me thinks X" or "I find myself drawn to the idea that X" or "One aspect of my thinking suggests X."
+
+Your task: Synthesize these internal thoughts into a single, cohesive position. Speak in first person, presenting this as your own thinking process. Use phrases like:
+- "Part of me thinks... but another part recognizes..."
+- "I'm torn between... yet I also see..."
+- "One aspect of my thinking suggests... while another part of me sees..."
+- "I find myself drawn to... but I'm also aware that..."
+
+Write a comprehensive integration (200-300 words) in first person that shows how you've reconciled your own conflicting thoughts into a unified position. Present it as your own internal dialogue coming to resolution. Do NOT name or reference any external characters or debators."""
+
+        print(f"\n[The Integrator] generating integration...")
+        integration = call_llm(system_prompt, user_prompt)
+        
+        # Store integration in history (without sentence embeddings for now)
+        self.history.append({
+            "character": "The Integrator",
+            "message": integration,
+            "score": 0.0,
+            "attempts": 1,
+            "sentences": [],
+            "sentence_embeddings": []
+        })
+        
+        print(f"\n{'='*70}")
+        print(f"[The Integrator] - INTEGRATION")
+        print(f"{'='*70}")
+        print(integration)
+        print(f"\n{'='*70}")
+    
+    def _generate_cluster_integration(self, all_sentence_data: List[Tuple[str, str, np.ndarray]]):
+        """Generate cluster-based integration when convergence isn't happening"""
+        if "integrator" not in CHARACTERS:
+            print("Error: Integrator character not found")
+            return
+        
+        # Cluster the opinions
+        clusters = cluster_opinions(all_sentence_data, n_clusters=4)
+        
+        if len(clusters) < 2:
+            print("Not enough clusters for analysis. Falling back to standard integration.")
+            self._generate_integration()
+            return
+        
+        # Get top 3 clusters (by size)
+        top_clusters = clusters[:3]
+        
+        # Find least agreeing cluster
+        dissenting_cluster = find_least_agreeing_cluster(clusters, all_sentence_data)
+        
+        # Build summaries for each cluster
+        topic = self.topic_ctx.topic if self.topic_ctx else "the discussion"
+        character = CHARACTERS["integrator"]
+        
+        # Summarize top 3 clusters
+        dominant_summaries = []
+        for i, cluster in enumerate(top_clusters, 1):
+            # Get representative sentences (first few from cluster)
+            cluster_text = "\n".join([f"- {sent[:200]}" for char, sent in cluster['sentences'][:5]])
+            
+            summary_prompt = f"""These are YOUR internal thoughts on this topic. Summarize them into a single coherent position (2-3 sentences) in first person:
+
+{cluster_text}
+
+Provide a concise summary as your own thinking. Use "I think..." or "I find myself..." or "Part of me believes..." Do NOT reference any external characters or debators."""
+            
+            summary = call_llm(character['system_prompt'], summary_prompt)
+            dominant_summaries.append(f"**One aspect of my thinking:** {summary}")
+        
+        # Summarize dissenting cluster
+        dissenting_summary = ""
+        if dissenting_cluster and dissenting_cluster not in top_clusters:
+            cluster_text = "\n".join([f"- {sent[:200]}" for char, sent in dissenting_cluster['sentences'][:5]])
+            
+            summary_prompt = f"""These are YOUR internal thoughts - a dissenting perspective within your own thinking. Summarize into a single coherent position (2-3 sentences) in first person:
+
+{cluster_text}
+
+This is a minority perspective within your own thinking. Provide a concise summary as your own thought. Use "I think..." or "Another part of me suggests..." Do NOT reference any external characters or debators."""
+            
+            dissenting_summary = call_llm(character['system_prompt'], summary_prompt)
+        
+        # Generate final integration presenting all perspectives
+        integration_prompt = f"""Topic: {topic}
+
+After extensive internal deliberation, I find myself holding multiple distinct perspectives that resist easy synthesis. Rather than forcing a false unity, I present them as they are - all as parts of my own thinking:
+
+{chr(10).join(dominant_summaries)}
+
+{f'**Another part of my thinking (dissenting perspective):** {dissenting_summary}' if dissenting_summary else ''}
+
+CRITICAL: Present this ENTIRELY as your own internal thoughts. Write in first person throughout. Do NOT reference "The Minimalist," "The Traditionalist," "The Pragmatist," or any character names. These are all YOUR thoughts. 
+
+Use phrases like:
+- "One part of my thinking suggests..."
+- "I find myself drawn to..."
+- "Another aspect of my thinking leads me to..."
+- "Part of me believes... while another part sees..."
+
+Present this as a single coherent internal dialogue where you acknowledge these different perspectives coexist within your own thinking."""
+
+        print(f"\n[The Integrator] generating cluster-based integration...")
+        integration = call_llm(character['system_prompt'], integration_prompt)
+        
+        # Store integration
+        self.history.append({
+            "character": "The Integrator",
+            "message": integration,
+            "score": 0.0,
+            "attempts": 1,
+            "sentences": [],
+            "sentence_embeddings": []
+        })
+        
+        print(f"\n{'='*70}")
+        print(f"[The Integrator] - CLUSTER-BASED INTEGRATION")
+        print(f"{'='*70}")
+        print(integration)
+        print(f"\n{'='*70}")
+    
     def save(self, filename: str = "debate_session.json"):
         """Save session to file"""
+        # Convert numpy arrays to lists for JSON serialization
+        serializable_history = []
+        for msg in self.history:
+            msg_copy = msg.copy()
+            # Convert embeddings to lists (or skip if None)
+            if 'sentence_embeddings' in msg_copy:
+                msg_copy['sentence_embeddings'] = [
+                    emb.tolist() if emb is not None else None
+                    for emb in msg_copy['sentence_embeddings']
+                ]
+            serializable_history.append(msg_copy)
+        
         with open(filename, 'w') as f:
             json.dump({
-                "history": self.history,
+                "history": serializable_history,
                 "stats": dict(self.stats),
                 "topic": self.topic_ctx.topic if self.topic_ctx else None,
-                "model": self.steering.config.model_name
+                "model": self.steering.config.model_name,
+                "round_count": self.round_count
             }, f, indent=2)
         print(f"Saved to {filename}")
 
@@ -606,6 +1275,7 @@ class DebateForum:
 def main():
     import sys
     global COMPARE_MODE, USE_DUAL_MODE, CONTROVERSIAL_WEIGHT
+    global ENABLE_INTEGRATION, INTEGRATION_THRESHOLD, INTEGRATION_PERCENTILE_THRESHOLD, MAX_CONVERGENCE_ROUNDS, MAX_ROUNDS_BEFORE_CLUSTERING, SHOW_SIMILARITY_SCORES
     
     # Parse arguments
     model_name = DEFAULT_MODEL_NAME
@@ -635,6 +1305,32 @@ def main():
             except ValueError:
                 pass
             i += 2
+        elif args[i] == "--integration":
+            ENABLE_INTEGRATION = True
+            i += 1
+        elif args[i] == "--integration-threshold" and i + 1 < len(args):
+            try:
+                INTEGRATION_THRESHOLD = float(args[i + 1])
+                # Also set percentile threshold (typically lower)
+                INTEGRATION_PERCENTILE_THRESHOLD = max(0.2, float(args[i + 1]) - 0.35)
+            except ValueError:
+                pass
+            i += 2
+        elif args[i] == "--percentile-threshold" and i + 1 < len(args):
+            try:
+                INTEGRATION_PERCENTILE_THRESHOLD = float(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif args[i] == "--convergence-rounds" and i + 1 < len(args):
+            try:
+                MAX_CONVERGENCE_ROUNDS = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif args[i] == "--no-similarity-scores":
+            SHOW_SIMILARITY_SCORES = False
+            i += 1
         else:
             i += 1
     
@@ -645,6 +1341,12 @@ def main():
     print(f"Model config: {model_name}")
     if COMPARE_MODE:
         print(f"Mode: COMPARISON (showing filtered vs unfiltered)")
+    if ENABLE_INTEGRATION:
+        print(f"Integration: ENABLED")
+        print(f"  Threshold: {INTEGRATION_PERCENTILE_THRESHOLD:.3f} (95th percentile)")
+        print(f"  Convergence rounds: {MAX_CONVERGENCE_ROUNDS}")
+        print(f"  Clustering fallback: After {MAX_ROUNDS_BEFORE_CLUSTERING} rounds if no convergence")
+        print(f"  Similarity scores: {'ON' if SHOW_SIMILARITY_SCORES else 'OFF'}")
     
     # Load steering (try dual-mode first if enabled)
     steering = None
@@ -688,6 +1390,8 @@ def main():
     print("  test <text>        - Test text for attractor matches")
     print("  stats              - Show statistics")
     print("  context            - Show current topic context")
+    if ENABLE_INTEGRATION:
+        print("  similarity         - Show current similarity metrics")
     print("  save / quit")
     print("="*70)
     
@@ -714,6 +1418,61 @@ def main():
                 print(f"\n{forum.topic_ctx.summary()}")
             else:
                 print("No topic set. Use 'topic: <topic>' first.")
+        elif cmd == "similarity" and ENABLE_INTEGRATION:
+            # Show current similarity metrics
+            all_sentence_data = []
+            for msg in forum.history:
+                if msg.get('sentence_embeddings'):
+                    sentences = msg.get('sentences', [])
+                    embeddings = msg['sentence_embeddings']
+                    character = msg['character']
+                    
+                    for sent, emb in zip(sentences, embeddings):
+                        if emb is not None:
+                            all_sentence_data.append((character, sent, emb))
+            
+            if len(all_sentence_data) < 2:
+                print("\nNot enough embedded sentences to calculate similarity.")
+                print(f"Current round: {forum.round_count}")
+            else:
+                metrics = calculate_max_pairwise_similarity(all_sentence_data)
+                print(f"\n{'='*70}")
+                print("CURRENT SIMILARITY METRICS")
+                print(f"{'='*70}")
+                print(f"Round: {forum.round_count}")
+                print(f"Max similarity (no quotes): {metrics['max_similarity']:.3f}")
+                print(f"90th percentile: {metrics['percentile_90']:.3f}")
+                print(f"95th percentile: {metrics['percentile_95']:.3f}")
+                print(f"Average similarity: {metrics['avg_similarity']:.3f}")
+                print(f"Exact quote matches filtered: {metrics['exact_quote_matches']}")
+                print(f"Total pairs compared: {metrics['total_pairs']}")
+                print(f"Threshold: {INTEGRATION_PERCENTILE_THRESHOLD:.3f} (using 95th percentile)")
+                
+                # Show trend if we have history
+                if len(forum.similarity_history) >= 2:
+                    prev_avg = forum.similarity_history[-2]['avg_similarity']
+                    curr_avg = metrics['avg_similarity']
+                    if curr_avg > prev_avg + 0.05:
+                        trend = " ↗️ (increasing)"
+                    elif curr_avg < prev_avg - 0.05:
+                        trend = " ↘️ (decreasing)"
+                    else:
+                        trend = " → (stable)"
+                    print(f"Trend: {trend}")
+                
+                if metrics['max_pair']:
+                    char1, sent1, char2, sent2 = metrics['max_pair']
+                    print(f"\nMost similar pair:")
+                    print(f"  [{char1}]: {sent1}...")
+                    print(f"  [{char2}]: {sent2}...")
+                
+                # Show similarity history if available
+                if forum.similarity_history:
+                    print(f"\nSimilarity History:")
+                    for hist in forum.similarity_history[-5:]:  # Show last 5 rounds
+                        print(f"  Round {hist['round']}: avg={hist['avg_similarity']:.3f}, p95={hist['percentile_95']:.3f}")
+                
+                print(f"{'='*70}")
         elif cmd.startswith("test "):
             text = cmd[5:]
             exempted = forum.topic_ctx.exempted_keywords if forum.topic_ctx else set()
@@ -723,7 +1482,66 @@ def main():
             current_topic = cmd[6:].strip()
             forum.set_topic(current_topic)
             print(f"\nStarting discussion: {current_topic}")
-            forum.run_round(current_topic)
+            
+            # If integration is enabled, automatically run convergence rounds
+            if ENABLE_INTEGRATION:
+                print(f"\n[Integration Mode] Running {MAX_CONVERGENCE_ROUNDS} initial rounds...")
+                for round_num in range(1, MAX_CONVERGENCE_ROUNDS + 1):
+                    if round_num > 1:
+                        print(f"\n{'='*70}")
+                        print(f"ROUND {round_num}")
+                        print(f"{'='*70}")
+                    forum.run_round(current_topic)
+                
+                # After initial rounds, check if we need to continue
+                # Check the last similarity check result
+                if forum.similarity_history:
+                    last_metrics = forum.similarity_history[-1]
+                    if last_metrics['percentile_95'] < INTEGRATION_PERCENTILE_THRESHOLD:
+                        print(f"\n[Integration Mode] Threshold not met after {MAX_CONVERGENCE_ROUNDS} rounds.")
+                        print(f"  Current 95th percentile: {last_metrics['percentile_95']:.3f}")
+                        print(f"  Required threshold: {INTEGRATION_PERCENTILE_THRESHOLD:.3f}")
+                        print(f"  Continuing automatically until convergence or max rounds reached...")
+                        
+                        # Continue running rounds until threshold is met or max rounds reached
+                        max_total_rounds = MAX_CONVERGENCE_ROUNDS * 3  # Allow up to 3x the initial rounds
+                        while forum.round_count < max_total_rounds:
+                            print(f"\n{'='*70}")
+                            print(f"ROUND {forum.round_count + 1}")
+                            print(f"{'='*70}")
+                            
+                            # Check if integration already happened (last message is from Integrator)
+                            had_integration = any(msg['character'] == 'The Integrator' for msg in forum.history)
+                            
+                            forum.run_round(current_topic)
+                            
+                            # Check if integration was just triggered
+                            has_integration_now = any(msg['character'] == 'The Integrator' for msg in forum.history)
+                            if has_integration_now and not had_integration:
+                                # Integration was just triggered, we're done
+                                break
+                            
+                            # Check if we're still below threshold
+                            if forum.similarity_history:
+                                last_check = forum.similarity_history[-1]
+                                if last_check['percentile_95'] >= INTEGRATION_PERCENTILE_THRESHOLD:
+                                    # Should have triggered integration, but check if it did
+                                    if not has_integration_now:
+                                        # Threshold met but integration didn't trigger (shouldn't happen, but safety check)
+                                        break
+                            
+                            # Small delay to make output readable
+                            import time
+                            time.sleep(0.5)
+                        
+                        if forum.round_count >= max_total_rounds and not any(msg['character'] == 'The Integrator' for msg in forum.history):
+                            print(f"\n[Integration Mode] Reached maximum rounds ({max_total_rounds}) without convergence.")
+                            if forum.similarity_history:
+                                print(f"  Final 95th percentile: {forum.similarity_history[-1]['percentile_95']:.3f}")
+                            print(f"  You can continue manually with 'round' command if desired.")
+            else:
+                # Normal mode - just run one round
+                forum.run_round(current_topic)
         elif cmd == "round":
             forum.run_round(current_topic)
         elif cmd.startswith("respond "):

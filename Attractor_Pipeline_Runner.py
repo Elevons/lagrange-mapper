@@ -17,14 +17,29 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+# Try to load from .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, skip .env file loading
+
 # ============================================================================
 # CENTRALIZED CONFIGURATION
 # ============================================================================
 
 # ============================================================================
-# API KEYS - SET YOUR KEY HERE
+# API KEYS - Load from environment variable or .env file
 # ============================================================================
-ANTHROPIC_API_KEY = ""  # "sk-ant-..." 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+if not ANTHROPIC_API_KEY:
+    print("Warning: ANTHROPIC_API_KEY not found in environment variables.")
+    print("Please set it using one of these methods:")
+    print("  1. Set environment variable: export ANTHROPIC_API_KEY='sk-ant-...'")
+    print("  2. Create a .env file with: ANTHROPIC_API_KEY=sk-ant-...")
+    print("     (requires python-dotenv: pip install python-dotenv)")
+    sys.exit(1) 
 
 # ============================================================================
 # MODEL CONFIGURATION

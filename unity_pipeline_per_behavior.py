@@ -28,15 +28,20 @@ Benefits:
 import json
 import re
 import requests
+import os
+import sys
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+
+# Add code generation pipeline to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'code generation pipeline'))
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
 LLM_URL = "http://localhost:1234/v1/chat/completions"
-RAG_DB_PATH = "unity_rag_db"
+RAG_DB_PATH = os.path.join(os.path.dirname(__file__), "code generation pipeline", "unity_rag_db")
 DEFAULT_TEMPERATURE = 0.3  # Lower for more deterministic code
 DOCS_PER_BEHAVIOR = 6
 
@@ -326,7 +331,7 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                     "temperature": DEFAULT_TEMPERATURE,
                     "max_tokens": 3000
                 },
-                timeout=90
+                timeout=900
             )
             
             if response.status_code != 200:
@@ -370,7 +375,7 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                     "temperature": DEFAULT_TEMPERATURE,
                     "max_tokens": 2000
                 },
-                timeout=60
+                timeout=900
             )
             
             if response.status_code != 200:
@@ -546,6 +551,76 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
 
 
 # ============================================================================
+# INTERACTIVE MODE
+# ============================================================================
+
+def interactive_mode(verbose: bool = True):
+    """Interactive mode for per-behavior RAG pipeline"""
+    print("="*60)
+    print("UNITY PIPELINE PER-BEHAVIOR - Interactive Mode")
+    print("="*60)
+    print("Multi-query RAG: retrieves docs separately for each behavior")
+    print("Commands:")
+    print("  quit    - Exit")
+    print("  verbose - Enable verbose output")
+    print("  quiet   - Disable verbose output")
+    print("="*60)
+    
+    pipeline = UnityPipelinePerBehavior(verbose=verbose)
+    
+    while True:
+        try:
+            user_input = input(f"\n> ").strip()
+            
+            if not user_input:
+                continue
+            if user_input.lower() == "quit":
+                break
+            if user_input.lower() == "verbose":
+                pipeline.verbose = True
+                print("Verbose ON")
+                continue
+            if user_input.lower() == "quiet":
+                pipeline.verbose = False
+                print("Verbose OFF")
+                continue
+            
+            # Generate code
+            result = pipeline.generate(user_input)
+            
+            if result.success:
+                print(f"\n{'─'*60}")
+                print("IR JSON:")
+                print(f"{'─'*60}")
+                print(json.dumps(result.ir_json, indent=2))
+                
+                print(f"\n{'─'*60}")
+                print(f"C# CODE: ({result.behaviors_generated} behaviors, {result.total_docs_retrieved} docs)")
+                print(f"{'─'*60}")
+                print(result.code)
+                
+                if result.rag_doc_names_by_behavior and verbose:
+                    print(f"\n{'─'*60}")
+                    print("RAG Docs by Behavior:")
+                    print(f"{'─'*60}")
+                    for behavior_name, doc_names in result.rag_doc_names_by_behavior.items():
+                        print(f"  {behavior_name}:")
+                        for doc_name in doc_names[:5]:  # Show first 5
+                            print(f"    - {doc_name}")
+            else:
+                print(f"Error: {result.error}")
+                
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print("Exiting.")
+
+
+# ============================================================================
 # COMPARISON FUNCTION
 # ============================================================================
 
@@ -618,7 +693,10 @@ if __name__ == "__main__":
     changes color based on spin speed, and explodes into particles after 10 seconds."""
     
     if len(sys.argv) > 1:
-        if sys.argv[1] == "--compare":
+        if sys.argv[1] in ["--interactive", "-i"]:
+            verbose = "--verbose" in sys.argv or "-v" in sys.argv
+            interactive_mode(verbose=verbose)
+        elif sys.argv[1] == "--compare":
             results = compare_approaches(test_prompt, verbose=True)
         else:
             test_prompt = " ".join(sys.argv[1:])

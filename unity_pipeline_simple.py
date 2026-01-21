@@ -14,8 +14,12 @@ No attractor detection, no calibration, just clean generation with RAG support.
 import json
 import requests
 import sys
+import os
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+
+# Add code generation pipeline to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'code generation pipeline'))
 from unity_ir_inference import extract_json_from_response
 
 # ============================================================================
@@ -23,7 +27,7 @@ from unity_ir_inference import extract_json_from_response
 # ============================================================================
 
 LLM_URL = "http://localhost:1234/v1/chat/completions"
-RAG_DB_PATH = "unity_rag_db"
+RAG_DB_PATH = os.path.join(os.path.dirname(__file__), "code generation pipeline", "unity_rag_db")
 DEFAULT_TEMPERATURE = 0.4
 
 # ============================================================================

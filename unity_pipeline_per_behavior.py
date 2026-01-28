@@ -49,7 +49,9 @@ DOCS_PER_BEHAVIOR = 6
 # PROMPTS
 # ============================================================================
 
-IR_SYSTEM_PROMPT = """You are a Unity behavior specification generator. Output structured JSON only.
+IR_SYSTEM_PROMPT = """You are a Unity behavior specification generator.
+
+IMPORTANT: Do NOT explain your reasoning. Output the JSON immediately.
 
 STRUCTURE:
 {
@@ -60,67 +62,48 @@ STRUCTURE:
 }
 
 RULES:
-1. Components must be exact Unity class names: Rigidbody, AudioSource, Collider, Animator, ParticleSystem, Light, Renderer
-2. Field types must be C# types: float, int, bool, string, Vector3, Color, AudioClip, GameObject, Transform, Material
-3. Default values must be actual values: 10, null, true, 0.5 (not descriptions)
-4. Each behavior should be a distinct logical unit with clear trigger and actions
-5. Actions are verb phrases describing what Unity APIs to use
+1. Components: exact Unity class names (Rigidbody, AudioSource, Collider, Animator, ParticleSystem, Light, Renderer)
+2. Field types: C# types (float, int, bool, string, Vector3, Color, AudioClip, GameObject, Transform, Material)
+3. Default values: actual values (10, null, true, 0.5) not descriptions
+4. Actions: verb phrases describing Unity APIs to use
 
-Output ONLY valid JSON. No markdown, no explanations."""
+OUTPUT: Wrap JSON in <output> tags. No thinking, no explanation - just the JSON.
+<output>
+{"class_name": "Example", "components": [], "fields": [], "behaviors": []}
+</output>"""
 
 
 
 
-CODE_GENERATION_PROMPT = """You are a Unity C# script generator. Generate a COMPLETE, working MonoBehaviour script.
+CODE_GENERATION_PROMPT = """You are a Unity C# script generator.
+
+IMPORTANT: Do NOT explain your reasoning. Output the code immediately.
 
 You will receive:
 1. An IR specification (class name, components, fields, behaviors)
 2. Unity API documentation for relevant APIs
 
-OUTPUT RULES:
-1. Output ONLY valid C# code - no markdown, no explanations
-2. Use the APIs shown in the documentation - if an API isn't documented, use a TODO comment
-3. Each behavior becomes a private method called from Update()
-4. Use proper Unity patterns: GetComponent in Start(), null checks, Time.deltaTime
-5. Use instance variables (rb.velocity) not class references (Rigidbody.velocity)
+RULES:
+1. Use the APIs shown in the documentation - if undocumented, use a TODO comment
+2. Each behavior becomes a private method called from Update() or appropriate trigger
+3. Use proper Unity patterns: GetComponent in Start(), null checks, Time.deltaTime
+4. Use instance variables (rb.velocity) not class references (Rigidbody.velocity)
 
-STRUCTURE:
-```
+OUTPUT: Wrap C# code in <output> tags. No thinking, no explanation - just the code.
+<output>
 using UnityEngine;
 
 [RequireComponent(typeof(...))]
 public class ClassName : MonoBehaviour
 {
-    // Public fields for inspector
     public float speed = 5f;
-    
-    // Private component references
     private Rigidbody rb;
-    private AudioSource audioSource;
     
-    void Start()
-    {
-        rb = GetComponent<Rigidbody>();
-        audioSource = GetComponent<AudioSource>();
-    }
-    
-    void Update()
-    {
-        BehaviorOne();
-        BehaviorTwo();
-    }
-    
-    void BehaviorOne()
-    {
-        // Implementation using the documented APIs
-    }
-    
-    void BehaviorTwo()
-    {
-        // Implementation
-    }
+    void Start() { rb = GetComponent<Rigidbody>(); }
+    void Update() { BehaviorOne(); }
+    void BehaviorOne() { /* implementation */ }
 }
-```"""
+</output>"""
 
 
 # ============================================================================
@@ -284,7 +267,7 @@ class UnityPipelinePerBehavior:
         try:
             # Build the RAG context
             if docs and self.rag:
-                rag_context = self.rag.format_context_for_prompt(docs, max_tokens=4000, include_content=True)
+                rag_context = self.rag.format_context_for_prompt(docs, max_tokens=2000, include_content=True)
             else:
                 rag_context = "(No Unity API documentation available)"
             
@@ -329,7 +312,7 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                         {"role": "user", "content": user_content}
                     ],
                     "temperature": DEFAULT_TEMPERATURE,
-                    "max_tokens": 3000
+                    "max_tokens": 6000
                 },
                 timeout=900
             )
@@ -338,6 +321,11 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                 if self.verbose:
                     print(f"  LLM error: {response.status_code}")
                 return None
+            
+            # Check if response was truncated
+            finish_reason = response.json()["choices"][0].get("finish_reason", "")
+            if finish_reason == "length" and self.verbose:
+                print("  Warning: Code response was truncated (max_tokens reached)")
             
             code = response.json()["choices"][0]["message"]["content"]
             
@@ -351,8 +339,63 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                 print(f"  Script generation error: {e}")
             return None
     
+    def _extract_output_tags(self, text: str) -> Optional[str]:
+        """
+        Extract content from <output>...</output> tags.
+        
+        Returns the content that contains actual C# class code (to avoid matching
+        examples in reasoning like `<output>...</output>`).
+        """
+        matches = re.findall(r'<output>(.*?)</output>', text, flags=re.DOTALL | re.IGNORECASE)
+        if not matches:
+            return None
+        
+        # Look for the match that contains actual C# class code
+        for match in matches:
+            # Check for C# class indicators
+            if re.search(r'(public\s+class|class\s+\w+\s*:\s*MonoBehaviour|using\s+UnityEngine)', match):
+                return match.strip()
+        
+        # Fallback: return the longest match if no class found
+        best_match = max(matches, key=len)
+        return best_match.strip() if len(best_match.strip()) > 10 else None
+    
+    def _strip_think_tags(self, text: str) -> str:
+        """
+        Remove <think>...</think> tags from model output.
+        
+        Some reasoning models (DeepSeek-R1, Qwen QwQ, etc.) wrap their
+        chain-of-thought reasoning in <think> tags before the actual response.
+        """
+        # Remove <think>...</think> blocks
+        cleaned = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Remove <thinking>...</thinking> variant
+        cleaned = re.sub(r'<thinking>.*?</thinking>\s*', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Handle missing opening tag - everything before </think> is reasoning
+        if '</think>' in cleaned.lower():
+            match = re.search(r'</think>\s*', cleaned, flags=re.IGNORECASE)
+            if match:
+                cleaned = cleaned[match.end():]
+        
+        if '</thinking>' in cleaned.lower():
+            match = re.search(r'</thinking>\s*', cleaned, flags=re.IGNORECASE)
+            if match:
+                cleaned = cleaned[match.end():]
+        
+        return cleaned.strip()
+    
     def _clean_generated_script(self, code: str) -> str:
-        """Clean the generated script - just remove markdown wrappers"""
+        """Clean the generated script - extract from output tags or clean up reasoning"""
+        # First try to extract from <output> tags (preferred)
+        extracted = self._extract_output_tags(code)
+        if extracted:
+            code = extracted
+        else:
+            # Fallback: strip think tags from reasoning models
+            code = self._strip_think_tags(code)
+        
         # Remove markdown code blocks
         code = re.sub(r'```csharp\n?', '', code)
         code = re.sub(r'```\w*\n?', '', code)
@@ -373,7 +416,7 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": DEFAULT_TEMPERATURE,
-                    "max_tokens": 2000
+                    "max_tokens": 8092
                 },
                 timeout=900
             )
@@ -382,9 +425,36 @@ Output ONLY the C# code, no markdown code blocks, no explanations."""
                 return None
             
             content = response.json()["choices"][0]["message"]["content"]
+            
+            # Check if response was truncated
+            finish_reason = response.json()["choices"][0].get("finish_reason", "")
+            if finish_reason == "length" and self.verbose:
+                print("  Warning: IR response was truncated (max_tokens reached)")
+            
+            # First try to extract from <output> tags
+            extracted = self._extract_output_tags(content)
+            if extracted:
+                content = extracted
+            else:
+                # Fallback: strip think tags from reasoning models
+                content = self._strip_think_tags(content)
+            
             _, parsed = extract_json_from_response(content)
             
-            # Validate that parsed result is a dict, not a list
+            # Handle case where model returns a list with a single dict
+            if isinstance(parsed, list):
+                if len(parsed) == 1 and isinstance(parsed[0], dict):
+                    parsed = parsed[0]
+                elif len(parsed) > 0 and isinstance(parsed[0], dict):
+                    # Take the first dict if multiple
+                    parsed = parsed[0]
+                    if self.verbose:
+                        print(f"  Warning: Got list of {len(parsed)} items, using first")
+                else:
+                    if self.verbose:
+                        print(f"  IR error: Expected dict, got {type(parsed).__name__}")
+                    return None
+            
             if parsed is not None and not isinstance(parsed, dict):
                 if self.verbose:
                     print(f"  IR error: Expected dict, got {type(parsed).__name__}")
@@ -692,28 +762,53 @@ if __name__ == "__main__":
     test_prompt = """Create a spinning object that plays a sound when clicked, 
     changes color based on spin speed, and explodes into particles after 10 seconds."""
     
-    if len(sys.argv) > 1:
-        if sys.argv[1] in ["--interactive", "-i"]:
-            verbose = "--verbose" in sys.argv or "-v" in sys.argv
-            interactive_mode(verbose=verbose)
-        elif sys.argv[1] == "--compare":
-            results = compare_approaches(test_prompt, verbose=True)
-        else:
-            test_prompt = " ".join(sys.argv[1:])
-            pipeline = UnityPipelinePerBehavior(verbose=True)
-            result = pipeline.generate(test_prompt)
-            if result.success:
-                print("\n" + "="*60)
-                print("GENERATED CODE:")
-                print("="*60)
-                print(result.code)
-    else:
-        # Default: run per-behavior pipeline
-        pipeline = UnityPipelinePerBehavior(verbose=True)
-        result = pipeline.generate(test_prompt)
+    # Parse flags from anywhere in arguments
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    interactive = "--interactive" in sys.argv or "-i" in sys.argv
+    compare = "--compare" in sys.argv
+    
+    # Filter out flags to get the actual prompt (if any)
+    flags = {"--verbose", "-v", "--interactive", "-i", "--compare"}
+    prompt_args = [arg for arg in sys.argv[1:] if arg not in flags]
+    
+    def print_result(result, verbose):
+        """Print the generation result"""
         if result.success:
+            if verbose:
+                print("\n" + "─"*60)
+                print("IR JSON:")
+                print("─"*60)
+                print(json.dumps(result.ir_json, indent=2))
+            
             print("\n" + "="*60)
-            print("GENERATED CODE:")
+            print(f"GENERATED CODE: ({result.behaviors_generated} behaviors, {result.total_docs_retrieved} docs)")
             print("="*60)
             print(result.code)
+            
+            if verbose and result.rag_doc_names_by_behavior:
+                print("\n" + "─"*60)
+                print("RAG Docs by Behavior:")
+                print("─"*60)
+                for behavior_name, doc_names in result.rag_doc_names_by_behavior.items():
+                    print(f"  {behavior_name}:")
+                    for doc_name in doc_names[:5]:
+                        print(f"    - {doc_name}")
+        else:
+            print(f"Error: {result.error}")
+    
+    if interactive:
+        interactive_mode(verbose=verbose)
+    elif compare:
+        results = compare_approaches(test_prompt, verbose=verbose)
+    elif prompt_args:
+        # Use provided prompt
+        test_prompt = " ".join(prompt_args)
+        pipeline = UnityPipelinePerBehavior(verbose=verbose)
+        result = pipeline.generate(test_prompt)
+        print_result(result, verbose)
+    else:
+        # No args or only flags: run default test prompt
+        pipeline = UnityPipelinePerBehavior(verbose=verbose)
+        result = pipeline.generate(test_prompt)
+        print_result(result, verbose)
 
